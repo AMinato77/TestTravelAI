@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
+from app.agents.explanation_agent import explain_travel_plan
 from app.agents.planning_agent import plan_itinerary
 from app.agents.preference_agent import extract_preferences
 from app.models.activity import Activity
@@ -26,9 +28,12 @@ class TravelPlanResult:
     weather: dict
     itinerary: Itinerary
     validation: ValidationResult
+    initial_itinerary: Itinerary
+    initial_validation: ValidationResult
     optimized: bool
     loaded_memory: UserProfile
     workflow_steps: list[str]
+    explanation: dict
 
 
 def build_travel_plan(
@@ -41,6 +46,7 @@ def build_travel_plan(
     budget_preference: str,
     feedback: str | None = None,
     preference_sources: list[PreferenceSource] | None = None,
+    manual_avoid: list[str] | None = None,
 ) -> TravelPlanResult:
     load_dotenv()
     workflow_steps = ["Loaded environment and started agent workflow."]
@@ -48,6 +54,7 @@ def build_travel_plan(
     memory_profile = load_user_profile(user_id)
     workflow_steps.append(f"Loaded saved memory for user_id={user_id}.")
     manual_interests = memory_profile.merged_interests(manual_interests)
+    manual_avoid = manual_avoid or []
     new_sources = preference_sources or []
     saved_sources = load_preference_sources(user_id)
     all_sources = [*saved_sources, *new_sources]
@@ -67,6 +74,7 @@ def build_travel_plan(
         extracted=extracted_profile,
         destination=destination,
         manual_interests=manual_interests,
+        manual_avoid=manual_avoid,
         feedback=feedback,
         uploaded_sources=[source.name for source in new_sources],
     )
@@ -77,20 +85,40 @@ def build_travel_plan(
     workflow_steps.append(f"Retrieved {len(external_activities)} external place candidates.")
     rag_activities = retrieve_activities(interests, destination)
     workflow_steps.append(f"Retrieved {len(rag_activities)} RAG/local activity candidates.")
-    activities = _deduplicate_activities([*external_activities, *rag_activities])
+    activities_before_filter = _deduplicate_activities([*external_activities, *rag_activities])
+    activities = _filter_avoided_activities(activities_before_filter, profile.avoid)
+    removed_count = len(activities_before_filter) - len(activities)
+    if removed_count:
+        workflow_steps.append(f"Removed {removed_count} activity candidate(s) because of user avoid preferences.")
     weather = get_weather(destination, days=days)
     workflow_steps.append("Weather tool returned travel weather context.")
 
     itinerary = plan_itinerary(destination, days, budget, activities, weather, profile)
     workflow_steps.append("Planning Agent generated the first itinerary.")
     validation = validate_itinerary(itinerary, budget, weather, profile)
+    initial_itinerary = deepcopy(itinerary)
+    initial_validation = deepcopy(validation)
     workflow_steps.append(f"Validation Agent found {len(validation.issues)} issue(s).")
     optimized = False
-    if not validation.ok:
+    for attempt in range(1, 4):
+        if validation.ok:
+            break
         itinerary = optimize_itinerary(itinerary, activities, budget, weather, profile)
         validation = validate_itinerary(itinerary, budget, weather, profile)
         optimized = True
-        workflow_steps.append("Optimization Agent adjusted the itinerary and validation ran again.")
+        workflow_steps.append(
+            f"Optimization Agent adjusted the itinerary and validation ran again (attempt {attempt})."
+        )
+
+    explanation = explain_travel_plan(
+        itinerary=itinerary,
+        profile=profile,
+        weather=weather,
+        activities=activities,
+        validation=validation,
+        optimized=optimized,
+    )
+    workflow_steps.append("Explanation Agent generated the final AI explanation.")
 
     return TravelPlanResult(
         profile=profile,
@@ -98,9 +126,12 @@ def build_travel_plan(
         weather=weather,
         itinerary=itinerary,
         validation=validation,
+        initial_itinerary=initial_itinerary,
+        initial_validation=initial_validation,
         optimized=optimized,
         loaded_memory=memory_profile,
         workflow_steps=workflow_steps,
+        explanation=explanation,
     )
 
 
@@ -129,3 +160,23 @@ def _deduplicate_activities(activities: list[Activity]) -> list[Activity]:
         seen.add(key)
         unique.append(activity)
     return unique
+
+
+def _filter_avoided_activities(activities: list[Activity], avoid: list[str]) -> list[Activity]:
+    if not avoid:
+        return activities
+    return [activity for activity in activities if not _activity_conflicts_with_avoid(activity, avoid)]
+
+
+def _activity_conflicts_with_avoid(activity: Activity, avoid: list[str]) -> bool:
+    haystack = f"{activity.name} {activity.category} {activity.description}".lower()
+    avoid_text = " ".join(avoid).lower()
+    if any(term in avoid_text for term in ["food", "restaurant", "cafe"]):
+        return activity.category == "food" or any(
+            term in haystack for term in ["restaurant", "food", "cafe", "café", "creperie", "crêperie"]
+        )
+    if any(term in avoid_text for term in ["museum", "museums"]):
+        return "museum" in haystack or activity.category == "museum"
+    if any(term in avoid_text for term in ["nightlife", "club"]):
+        return activity.category == "nightlife" or any(term in haystack for term in ["club", "nightlife", "bar"])
+    return any(term and term in haystack for term in avoid)

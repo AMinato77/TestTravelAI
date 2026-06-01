@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-load_dotenv(ROOT / ".env")
+load_dotenv(ROOT / ".env", override=True)
 
 from app.agents.request_agent import parse_travel_request
 from app.models.preference_source import PreferenceSource
@@ -23,14 +23,15 @@ from app.tools.openai_runtime import MissingLocalAIError, MissingOpenAIKeyError,
 INTEREST_OPTIONS = [
     "food",
     "culture",
+    "history",
+    "sport",
     "nightlife",
     "gaming",
     "anime",
     "nature",
+    "local spots",
+    "shopping",
     "luxury",
-    "budget",
-    "relaxed",
-    "adventure",
 ]
 
 
@@ -65,6 +66,142 @@ def _build_preference_sources(uploaded_files, travel_ratings: str, feedback: str
     return sources
 
 
+def _show_validation(label: str, validation) -> None:
+    st.markdown(f"### {label}")
+    error_count = getattr(validation, "error_count", None)
+    warning_count = getattr(validation, "warning_count", None)
+    if error_count is None:
+        error_count = sum(1 for issue in validation.issues if issue.severity == "error")
+    if warning_count is None:
+        warning_count = sum(1 for issue in validation.issues if issue.severity == "warning")
+    st.write(f"Errors: {error_count} | Warnings: {warning_count}")
+    if validation.ok:
+        st.success("Plan ist valide.")
+        return
+    for issue in validation.issues:
+        prefix = f"Tag {issue.day or '-'}"
+        if issue.activity:
+            prefix += f" | {issue.activity}"
+        st.warning(f"{prefix}: {issue.issue_type} - {issue.message}")
+
+
+def _show_items(items: list[str], empty_text: str = "Keine Daten erkannt.") -> None:
+    cleaned = [item for item in items if item]
+    if not cleaned:
+        st.caption(empty_text)
+        return
+    for item in cleaned:
+        st.write(f"- {item}")
+
+
+def _show_request_summary(parsed_request: TravelRequest) -> None:
+    st.markdown("### Erkannte Reiseanfrage")
+    col_1, col_2, col_3, col_4 = st.columns(4)
+    col_1.metric("Ziel", parsed_request.destination)
+    col_2.metric("Tage", parsed_request.duration_days)
+    col_3.metric("Budget", f"{parsed_request.budget:g} EUR")
+    col_4.metric("Reisestil", parsed_request.travel_style)
+    st.markdown("**Interessen**")
+    st.write(", ".join(parsed_request.interests) or "Keine Interessen erkannt.")
+    if parsed_request.avoid:
+        st.markdown("**Abneigungen**")
+        st.write(", ".join(parsed_request.avoid))
+    with st.expander("Technische JSON-Ausgabe", expanded=False):
+        st.json(
+            {
+                "destination": parsed_request.destination,
+                "duration_days": parsed_request.duration_days,
+                "budget": parsed_request.budget,
+                "interests": parsed_request.interests,
+                "avoid": parsed_request.avoid,
+                "travel_style": parsed_request.travel_style,
+            }
+        )
+
+
+def _show_profile_summary(profile) -> None:
+    st.markdown("### Profil")
+    st.write(f"**User:** {profile.user_id}")
+    st.write(f"**Reisestil:** {profile.travel_style}")
+    st.write(f"**Budgetpraeferenz:** {profile.budget_preference}")
+    st.markdown("**Gelernte Interessen**")
+    _show_items(profile.interests)
+    st.markdown("**Meiden**")
+    _show_items(profile.avoid)
+    if profile.past_destinations:
+        st.markdown("**Bisherige Ziele**")
+        st.write(", ".join(profile.past_destinations))
+    with st.expander("Profil als JSON", expanded=False):
+        st.json(
+            {
+                "user_id": profile.user_id,
+                "interests": profile.interests,
+                "travel_style": profile.travel_style,
+                "budget_preference": profile.budget_preference,
+                "avoid": profile.avoid,
+                "preferred_day_structure": profile.preferred_day_structure,
+                "past_destinations": profile.past_destinations,
+                "uploaded_sources": profile.uploaded_sources,
+            }
+        )
+
+
+def _show_weather_summary(weather: dict) -> None:
+    st.markdown("### Wetter")
+    st.write(weather.get("summary", "Keine Wetterzusammenfassung vorhanden."))
+    col_1, col_2 = st.columns(2)
+    col_1.metric("Temperatur", f"{weather.get('temperature_c', '?')} °C")
+    col_2.metric("Max. Regenchance", f"{weather.get('max_rain_chance', '?')}%")
+    if weather.get("rain_expected"):
+        st.warning("Regen erwartet. Indoor-Alternativen werden bevorzugt.")
+    else:
+        st.success("Kein relevanter Regen erwartet.")
+    with st.expander("Wetter als JSON", expanded=False):
+        st.json(weather)
+
+
+def _show_ai_explanation(explanation: dict) -> None:
+    st.markdown("## AI Explanation")
+    if explanation.get("summary"):
+        st.write(explanation["summary"])
+
+    col_1, col_2 = st.columns(2)
+    with col_1:
+        st.markdown("### Warum dieser Plan passt")
+        _show_items(explanation.get("preference_reasoning", []))
+        st.markdown("### Datenquellen")
+        _show_items(explanation.get("data_sources", []))
+    with col_2:
+        st.markdown("### Validierung")
+        st.write(explanation.get("validation_result") or "Keine Validierungserklaerung vorhanden.")
+        st.markdown("### Optimierung")
+        st.write(explanation.get("optimization_result") or "Keine Optimierungserklaerung vorhanden.")
+
+    caveats = explanation.get("caveats", [])
+    if caveats:
+        with st.expander("Hinweise"):
+            _show_items(caveats)
+
+
+def _show_itinerary(itinerary, title: str) -> None:
+    st.markdown(f"## {title}")
+    for day in itinerary.days:
+        with st.container(border=True):
+            st.markdown(f"### Tag {day.day}")
+            for activity in day.activities:
+                st.markdown(
+                    f"**{activity.name}**  \n"
+                    f"{activity.category} | {activity.duration_hours:g}h | "
+                    f"{activity.cost:g} {itinerary.currency} | "
+                    f"{'Indoor' if activity.indoor else 'Outdoor'}"
+                )
+                if activity.description:
+                    st.caption(activity.description)
+            if day.notes:
+                st.info(" ".join(day.notes))
+            st.write(f"Tagessumme: {day.total_cost:g} {itinerary.currency}")
+
+
 st.set_page_config(page_title="Adaptive AI Travel Agent", page_icon="AI", layout="wide")
 
 st.title("Adaptive AI Travel Agent")
@@ -80,7 +217,14 @@ with st.sidebar:
 
     memory = load_user_profile(user_id)
     with st.expander("Gespeichertes Memory", expanded=False):
-        st.json(memory.to_dict())
+        st.write(f"Reisestil: {memory.travel_style}")
+        st.write(f"Budgetpraeferenz: {memory.budget_preference}")
+        st.markdown("**Interessen**")
+        _show_items(memory.interests)
+        st.markdown("**Bisherige Ziele**")
+        _show_items(memory.past_destinations)
+        with st.expander("Memory JSON", expanded=False):
+            st.json(memory.to_dict())
 
 st.subheader("Preference Learning")
 upload_col, rating_col = st.columns(2)
@@ -102,13 +246,6 @@ request_text = st.text_area(
     "Freie Reiseanfrage",
     value="Ich will 4 Tage nach Barcelona, Budget 700 Euro, ich mag Food, Gaming, Anime und lokale Spots und will keinen stressigen Plan.",
 )
-col_a, col_b, col_c = st.columns(3)
-with col_a:
-    destination = st.text_input("Ziel", value="Barcelona")
-with col_b:
-    days = st.number_input("Tage", min_value=1, max_value=14, value=3, step=1)
-with col_c:
-    budget = st.number_input("Budget", min_value=50, max_value=10000, value=600, step=50)
 
 generate = st.button("Reiseplan erstellen", type="primary")
 
@@ -118,10 +255,11 @@ if generate:
         parsed_request = parse_travel_request(
             request_text,
             TravelRequest(
-                destination=destination,
-                duration_days=int(days),
-                budget=float(budget),
+                destination="Barcelona",
+                duration_days=3,
+                budget=600,
                 interests=interests,
+                avoid=[],
                 travel_style=travel_style,
             ),
         )
@@ -136,21 +274,13 @@ if generate:
                 budget_preference=budget_preference,
                 feedback=feedback or None,
                 preference_sources=preference_sources,
+                manual_avoid=parsed_request.avoid,
             )
     except (MissingOpenAIKeyError, MissingLocalAIError) as exc:
         st.error(str(exc))
         st.stop()
 
-    st.markdown("### Erkannte Reiseanfrage")
-    st.json(
-        {
-            "destination": parsed_request.destination,
-            "duration_days": parsed_request.duration_days,
-            "budget": parsed_request.budget,
-            "interests": parsed_request.interests,
-            "travel_style": parsed_request.travel_style,
-        }
-    )
+    _show_request_summary(parsed_request)
 
     st.markdown("### Agent Workflow")
     for step in result.workflow_steps:
@@ -158,30 +288,20 @@ if generate:
 
     profile_col, weather_col, validation_col = st.columns(3)
     with profile_col:
-        st.markdown("### Profil")
-        st.json(
-            {
-                "user_id": result.profile.user_id,
-                "interests": result.profile.interests,
-                "travel_style": result.profile.travel_style,
-                "budget_preference": result.profile.budget_preference,
-                "avoid": result.profile.avoid,
-                "preferred_day_structure": result.profile.preferred_day_structure,
-                "past_destinations": result.profile.past_destinations,
-                "uploaded_sources": result.profile.uploaded_sources,
-            }
-        )
+        _show_profile_summary(result.profile)
     with weather_col:
-        st.markdown("### Wetter")
-        st.json(result.weather)
+        _show_weather_summary(result.weather)
     with validation_col:
-        st.markdown("### Validation")
         st.write("Optimiert:", "Ja" if result.optimized else "Nein")
-        if result.validation.ok:
-            st.success("Plan ist valide.")
-        else:
-            for issue in result.validation.issues:
-                st.warning(f"Tag {issue.day or '-'}: {issue.message}")
+        _show_validation("Finale Validation", result.validation)
+
+    if result.optimized:
+        st.markdown("## Optimization Loop")
+        before_col, after_col = st.columns(2)
+        with before_col:
+            _show_validation("Vor Optimierung", result.initial_validation)
+        with after_col:
+            _show_validation("Nach Optimierung", result.validation)
 
     st.markdown("## Gefundene Aktivitaeten")
     st.dataframe(
@@ -200,22 +320,13 @@ if generate:
         hide_index=True,
     )
 
-    st.markdown("## Reiseplan")
-    for day in result.itinerary.days:
-        with st.container(border=True):
-            st.markdown(f"### Tag {day.day}")
-            for activity in day.activities:
-                st.markdown(
-                    f"**{activity.name}**  \n"
-                    f"{activity.category} | {activity.duration_hours:g}h | "
-                    f"{activity.cost:g} {result.itinerary.currency} | "
-                    f"{'Indoor' if activity.indoor else 'Outdoor'}"
-                )
-                if activity.description:
-                    st.caption(activity.description)
-            if day.notes:
-                st.info(" ".join(day.notes))
-            st.write(f"Tagessumme: {day.total_cost:g} {result.itinerary.currency}")
+    if result.optimized:
+        with st.expander("Erster Plan vor Optimierung", expanded=False):
+            _show_itinerary(result.initial_itinerary, "Initialer Reiseplan")
+
+    _show_ai_explanation(result.explanation)
+
+    _show_itinerary(result.itinerary, "Finaler Reiseplan")
 
     st.markdown("## Final Travel Package")
     package_col, todo_col = st.columns(2)
@@ -224,15 +335,17 @@ if generate:
         st.metric("Gesamtkosten", f"{result.itinerary.total_cost:g} {result.itinerary.currency}")
         st.metric("Budget", f"{parsed_request.budget:g} {result.itinerary.currency}")
         st.markdown("### Warum der Plan passt")
-        st.write(", ".join(result.profile.interests) or "Keine Praeferenzen erkannt.")
+        _show_items(result.profile.interests, "Keine Praeferenzen erkannt.")
     with todo_col:
         st.markdown("### Packliste")
         pack_items = ["bequeme Schuhe", "Powerbank", "Reisedokumente"]
         if result.weather.get("rain_expected"):
             pack_items.append("Regenjacke")
-        st.write(pack_items)
+        for item in pack_items:
+            st.write(f"- {item}")
         st.markdown("### To-do vor der Reise")
-        st.write(["API-Daten/Verfuegbarkeit pruefen", "Tickets reservieren", "Route offline speichern"])
+        for item in ["API-Daten/Verfuegbarkeit pruefen", "Tickets reservieren", "Route offline speichern"]:
+            st.write(f"- {item}")
 
     map_points = [
         {"lat": activity.latitude, "lon": activity.longitude}

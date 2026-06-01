@@ -36,10 +36,13 @@ class ValidationIssue:
     severity: str
     message: str
     day: int | None = None
+    issue_type: str = "general"
+    activity: str | None = None
 
 
 @dataclass(slots=True)
 class ValidationResult:
     ok: bool
     issues: list[ValidationIssue] = field(default_factory=list)
-
+    error_count: int = 0
+    warning_count: int = 0

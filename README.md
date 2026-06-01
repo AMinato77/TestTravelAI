@@ -53,6 +53,18 @@ Ohne `WEATHER_API_KEY` nutzt die App Fallback-Wetter, damit der Workflow weiter
 testbar bleibt. Mit Key liefert das Weather Tool pro Reisetag `rain_chance`,
 `is_rainy`, Temperatur und Wetterbeschreibung fuer Validation und Optimization.
 
+Geoapify Places:
+
+```powershell
+GEOAPIFY_API_KEY=dein_geoapify_key
+```
+
+Quick test:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\test_geoapify_places.py Barcelona "food,culture" 5
+```
+
 ## MVP Workflow
 
 1. Nutzereingaben erfassen

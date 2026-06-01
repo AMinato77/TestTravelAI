@@ -7,6 +7,15 @@ from app.models.user_profile import UserProfile
 
 
 MEMORY_DIR = Path("data/user_profiles")
+NON_INTEREST_TERMS = {
+    "budget",
+    "budget travel",
+    "cheap",
+    "cheap travel",
+    "low budget",
+    "medium budget",
+    "high budget",
+}
 
 
 def load_user_profile(user_id: str) -> UserProfile:
@@ -30,11 +39,12 @@ def update_user_profile(
     extracted: UserProfile,
     destination: str,
     manual_interests: list[str],
+    manual_avoid: list[str] | None = None,
     feedback: str | None = None,
     uploaded_sources: list[str] | None = None,
 ) -> UserProfile:
     interests = _merge_unique(existing.interests, extracted.interests, manual_interests)
-    avoid = _merge_unique(existing.avoid, extracted.avoid)
+    avoid = _merge_unique(existing.avoid, extracted.avoid, manual_avoid or [])
     past_destinations = _merge_unique(existing.past_destinations, [destination])
     feedback_history = existing.feedback_history[:]
     if feedback and feedback.strip():
@@ -65,7 +75,7 @@ def _profile_path(user_id: str) -> Path:
 def _profile_from_dict(data: dict, fallback_user_id: str) -> UserProfile:
     return UserProfile(
         user_id=data.get("user_id", fallback_user_id),
-        interests=data.get("interests", []),
+        interests=_clean_interests(data.get("interests", [])),
         budget_preference=data.get("budget_preference", "medium"),
         travel_style=data.get("travel_style", "balanced"),
         avoid=data.get("avoid", []),
@@ -98,11 +108,19 @@ def _merge_unique(*groups: list[str]) -> list[str]:
     for group in groups:
         for value in group:
             normalized = value.strip().lower()
-            if not normalized or normalized in seen:
+            if not normalized or normalized in NON_INTEREST_TERMS or normalized in seen:
                 continue
             seen.add(normalized)
             values.append(normalized)
     return values
+
+
+def _clean_interests(values: list[str]) -> list[str]:
+    return [
+        value.strip().lower()
+        for value in values
+        if value.strip().lower() and value.strip().lower() not in NON_INTEREST_TERMS
+    ]
 
 
 def _day_structure_from_style(travel_style: str) -> str:

@@ -4,12 +4,25 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="6f8cfc59-74e7-4b7e-861b-87745aea2197" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/TravelAI.iml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+    <list default="true" id="6f8cfc59-74e7-4b7e-861b-87745aea2197" name="Changes" comment="1commitnumber">
+      <change beforePath="$PROJECT_DIR$/.env.example" beforeDir="false" afterPath="$PROJECT_DIR$/.env.example" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/agents/planning_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/planning_agent.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/agents/preference_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/preference_agent.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/agents/request_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/request_agent.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/models/activity.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/models/activity.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/models/itinerary.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/models/itinerary.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/models/travel_request.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/models/travel_request.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/orchestrator.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/orchestrator.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/rag/retrieval.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/rag/retrieval.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/rag/user_memory.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/rag/user_memory.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/tools/openai_runtime.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tools/openai_runtime.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/tools/optimization_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tools/optimization_tool.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/tools/places_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tools/places_tool.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/tools/validation_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tools/validation_tool.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/streamlit_app.py" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/streamlit_app.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -17,34 +30,46 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="39" />
+    <option name="cachedIndexableFilesCount" value="45" />
   </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;AMinato77&quot;
+  }
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/AMinato77/TravelAI.git&quot;,
+    &quot;accountId&quot;: &quot;7b0a37e0-1d37-454e-b00b-7096edcd1051&quot;
+  }
+}</component>
   <component name="McpProjectServerCommands">
     <commands />
     <urls />
   </component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="1.31167729028674" />
-      <entry key="MS500" value="3.8839522453691586" />
-      <entry key="S2" value="12.710609489803247" />
-      <entry key="S5" value="28.13851440817655" />
-      <entry key="S10" value="43.359666684201834" />
-      <entry key="S30" value="62.04849593705426" />
-      <entry key="S60" value="68.72944841762306" />
-      <entry key="M2" value="76.06527565887913" />
-      <entry key="M5" value="106.67730291122857" />
-      <entry key="M10" value="150.16595615454216" />
-      <entry key="M15" value="188.49151233189664" />
-      <entry key="M30" value="297.677428476025" />
-      <entry key="H1" value="489.70755039724446" />
-      <entry key="H2" value="725.7363307140442" />
-      <entry key="H4" value="924.8160455777331" />
-      <entry key="D1" value="1159.2881510337786" />
-      <entry key="W1" value="1207.66931637981" />
+      <entry key="MS100" value="1.2674319199616955" />
+      <entry key="MS500" value="3.4488193121900284" />
+      <entry key="S2" value="10.052234966574034" />
+      <entry key="S5" value="21.89032121717155" />
+      <entry key="S10" value="38.11031185674827" />
+      <entry key="S30" value="63.781785474868386" />
+      <entry key="S60" value="82.70346616031678" />
+      <entry key="M2" value="123.28444937704216" />
+      <entry key="M5" value="232.3600453158937" />
+      <entry key="M10" value="376.44440413164443" />
+      <entry key="M15" value="495.812019384577" />
+      <entry key="M30" value="779.1334640573479" />
+      <entry key="H1" value="1173.7628274281572" />
+      <entry key="H2" value="1720.5800572394744" />
+      <entry key="H4" value="2449.6634184951413" />
+      <entry key="D1" value="4011.8812993254815" />
+      <entry key="W1" value="4480.8702507618755" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
@@ -52,37 +77,37 @@
       <entry key="S2" value="0.0" />
       <entry key="S5" value="0.0" />
       <entry key="S10" value="0.0" />
-      <entry key="S30" value="0.0" />
-      <entry key="S60" value="0.0" />
-      <entry key="M2" value="0.0" />
-      <entry key="M5" value="0.0" />
-      <entry key="M10" value="0.0" />
-      <entry key="M15" value="0.0" />
-      <entry key="M30" value="0.0" />
-      <entry key="H1" value="0.0" />
-      <entry key="H2" value="0.0" />
-      <entry key="H4" value="0.0" />
-      <entry key="D1" value="0.0" />
-      <entry key="W1" value="0.0" />
+      <entry key="S30" value="1.4933938172888286E-281" />
+      <entry key="S60" value="3.864445390076827E-141" />
+      <entry key="M2" value="6.216466351615489E-71" />
+      <entry key="M5" value="8.268323019160491E-29" />
+      <entry key="M10" value="9.093031958131279E-15" />
+      <entry key="M15" value="4.356514310516249E-10" />
+      <entry key="M30" value="2.0872264636392074E-5" />
+      <entry key="H1" value="0.004568617365942591" />
+      <entry key="H2" value="0.06759154803629072" />
+      <entry key="H4" value="0.259983745715564" />
+      <entry key="D1" value="0.7988974459960504" />
+      <entry key="W1" value="0.9684342657840086" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="1.2710708526389973" />
-      <entry key="MS500" value="3.8642088135784998" />
-      <entry key="S2" value="12.69586137282056" />
-      <entry key="S5" value="28.125973625287354" />
-      <entry key="S10" value="43.35014414663015" />
-      <entry key="S30" value="62.04399085620756" />
-      <entry key="S60" value="68.72694752816041" />
-      <entry key="M2" value="76.06384423842684" />
-      <entry key="M5" value="106.67642811882135" />
-      <entry key="M10" value="150.16531530186143" />
-      <entry key="M15" value="188.49096692582484" />
-      <entry key="M30" value="297.676985337056" />
-      <entry key="H1" value="489.7071761847852" />
-      <entry key="H2" value="725.7360492475011" />
-      <entry key="H4" value="924.8158650169166" />
-      <entry key="D1" value="1159.288113123963" />
-      <entry key="W1" value="1207.669310733782" />
+      <entry key="MS100" value="1.2423507662702138" />
+      <entry key="MS500" value="3.434075218181305" />
+      <entry key="S2" value="10.041161422633984" />
+      <entry key="S5" value="21.880695629060714" />
+      <entry key="S10" value="38.10196587449902" />
+      <entry key="S30" value="63.77713583132529" />
+      <entry key="S60" value="82.70043823923142" />
+      <entry key="M2" value="123.28216765168087" />
+      <entry key="M5" value="232.35828283235102" />
+      <entry key="M10" value="376.4429484376413" />
+      <entry key="M15" value="495.81072920400305" />
+      <entry key="M30" value="779.1324533848976" />
+      <entry key="H1" value="1173.7665977455288" />
+      <entry key="H2" value="1720.6470325834314" />
+      <entry key="H4" value="2449.922933459845" />
+      <entry key="D1" value="4012.6800581227285" />
+      <entry key="W1" value="4481.838662592589" />
     </decayedShown>
   </component>
   <component name="ProjectColorInfo">{
@@ -95,6 +120,11 @@
   </component>
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
+    "Python.places_tool.executor": "Run",
+    "Python.test_geoapify_places.executor": "Run",
+    "Python.test_itinerary_builder.executor": "Run",
+    "Python.test_itinerary_optimizer.executor": "Run",
+    "Python.test_travel_data_pipeline.executor": "Run",
     "Python.test_weather.executor": "Run",
     "RunOnceActivity.MCP Project settings loaded": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
@@ -102,7 +132,7 @@
     "RunOnceActivity.git.unshallow": "true",
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
     "codeWithMe.voiceChat.enabledByDefault": "false",
-    "git-widget-placeholder": "master",
+    "git-widget-placeholder": "main",
     "ignore.virus.scanning.warn.message": "true",
     "last_opened_file_path": "C:/Users/amint/PycharmProjects/TravelAI",
     "node.js.detected.package.eslint": "true",
@@ -114,8 +144,32 @@
     "vue.rearranger.settings.migration": "true"
   }
 }]]></component>
-  <component name="RunManager">
-    <configuration name="test_weather" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+  <component name="RunManager" selected="Python.test_itinerary_optimizer">
+    <configuration name="places_tool" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="TravelAI" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/app/tools" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="DEBUG_JUST_MY_CODE" value="false" />
+      <option name="RUN_TOOL" value="" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/app/tools/places_tool.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="test_geoapify_places" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="TravelAI" />
       <option name="ENV_FILES" value="" />
       <option name="INTERPRETER_OPTIONS" value="" />
@@ -130,7 +184,79 @@
       <option name="ADD_SOURCE_ROOTS" value="true" />
       <option name="DEBUG_JUST_MY_CODE" value="false" />
       <option name="RUN_TOOL" value="" />
-      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/scripts/test_weather.py" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/scripts/test_geoapify_places.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="test_itinerary_builder" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="TravelAI" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/scripts" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="DEBUG_JUST_MY_CODE" value="false" />
+      <option name="RUN_TOOL" value="" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/scripts/test_itinerary_builder.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="test_itinerary_optimizer" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="TravelAI" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/scripts" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="DEBUG_JUST_MY_CODE" value="false" />
+      <option name="RUN_TOOL" value="" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/scripts/test_itinerary_optimizer.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="test_travel_data_pipeline" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="TravelAI" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/scripts" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="DEBUG_JUST_MY_CODE" value="false" />
+      <option name="RUN_TOOL" value="" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/scripts/test_travel_data_pipeline.py" />
       <option name="PARAMETERS" value="" />
       <option name="SHOW_COMMAND_LINE" value="false" />
       <option name="EMULATE_TERMINAL" value="false" />
@@ -141,7 +267,11 @@
     </configuration>
     <recent_temporary>
       <list>
-        <item itemvalue="Python.test_weather" />
+        <item itemvalue="Python.test_itinerary_optimizer" />
+        <item itemvalue="Python.test_itinerary_builder" />
+        <item itemvalue="Python.test_travel_data_pipeline" />
+        <item itemvalue="Python.test_geoapify_places" />
+        <item itemvalue="Python.places_tool" />
       </list>
     </recent_temporary>
   </component>
@@ -163,9 +293,31 @@
       <workItem from="1780240849623" duration="2037000" />
       <workItem from="1780243159103" duration="286000" />
     </task>
+    <task id="LOCAL-00001" summary="uuzeren">
+      <option name="closed" value="true" />
+      <created>1780275598469</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1780275598469</updated>
+    </task>
+    <task id="LOCAL-00002" summary="1commitnumber">
+      <option name="closed" value="true" />
+      <created>1780275808545</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1780275808545</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
     <option name="version" value="3" />
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="uuzeren" />
+    <MESSAGE value="1commitnumber" />
+    <option name="LAST_COMMIT_MESSAGE" value="1commitnumber" />
   </component>
 </project>

@@ -9,5 +9,5 @@ class TravelRequest:
     duration_days: int = 3
     budget: float = 600
     interests: list[str] = field(default_factory=list)
+    avoid: list[str] = field(default_factory=list)
     travel_style: str = "balanced"
-

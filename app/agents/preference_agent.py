@@ -23,6 +23,16 @@ AVOID_KEYWORDS = {
     "crowded places": ["crowded", "voll", "ueberfuellt", "überfüllt"],
 }
 
+NON_INTEREST_TERMS = {
+    "budget",
+    "budget travel",
+    "cheap",
+    "cheap travel",
+    "low budget",
+    "medium budget",
+    "high budget",
+}
+
 
 def extract_preferences(
     manual_interests: list[str],
@@ -59,7 +69,7 @@ def extract_preferences(
         model_env="OPENAI_PREFERENCE_MODEL",
     )
     return UserProfile(
-        interests=data.get("interests", manual_interests),
+        interests=_clean_interests(data.get("interests", manual_interests)),
         budget_preference=data.get("budget_preference", budget_preference),
         travel_style=data.get("travel_style", travel_style),
         avoid=data.get("avoid", []),
@@ -75,7 +85,11 @@ def _extract_demo_preferences(
     preference_sources: list[PreferenceSource],
 ) -> UserProfile:
     combined_text = " ".join(source.text.lower() for source in preference_sources)
-    interests = {interest.strip().lower() for interest in manual_interests if interest.strip()}
+    interests = {
+        interest.strip().lower()
+        for interest in manual_interests
+        if interest.strip().lower() and interest.strip().lower() not in NON_INTEREST_TERMS
+    }
     avoid: set[str] = set()
 
     for interest, keywords in INTEREST_KEYWORDS.items():
@@ -108,3 +122,15 @@ def _extract_demo_preferences(
         ],
         uploaded_sources=[source.name for source in preference_sources],
     )
+
+
+def _clean_interests(values: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = str(value).strip().lower()
+        if not normalized or normalized in NON_INTEREST_TERMS or normalized in seen:
+            continue
+        seen.add(normalized)
+        cleaned.append(normalized)
+    return cleaned

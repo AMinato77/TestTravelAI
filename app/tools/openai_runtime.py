@@ -3,9 +3,14 @@ from __future__ import annotations
 import json
 import os
 import re
+from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
 from openai import OpenAI
+
+ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(ROOT / ".env", override=True)
 
 
 class MissingOpenAIKeyError(RuntimeError):
@@ -44,17 +49,42 @@ def generate_json(system_prompt: str, payload: dict, model_env: str) -> dict:
     if provider == "ollama":
         return _generate_ollama_json(system_prompt, payload)
     if provider == "openai":
-        client = get_openai_client()
-        response = client.responses.create(
-            model=openai_model(model_env),
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=True)},
-            ],
-        )
-        return _loads_json_object(response.output_text)
+        return _generate_openai_json(system_prompt, payload, model_env)
 
     raise MissingLocalAIError(f"Unknown AI_PROVIDER={provider}. Use demo, ollama, or openai.")
+
+
+def _generate_openai_json(system_prompt: str, payload: dict, model_env: str) -> dict:
+    client = get_openai_client()
+    model = openai_model(model_env)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                f"{system_prompt}\n\n"
+                "Return only one valid JSON object. "
+                "Do not include markdown, code fences, explanations, or extra text."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "Input JSON:\n"
+                f"{json.dumps(payload, ensure_ascii=True)}"
+            ),
+        },
+    ]
+
+    if hasattr(client, "responses"):
+        response = client.responses.create(model=model, input=messages)
+        return _loads_json_object(response.output_text)
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        response_format={"type": "json_object"},
+    )
+    return _loads_json_object(response.choices[0].message.content or "{}")
 
 
 def _generate_ollama_json(system_prompt: str, payload: dict) -> dict:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.models.activity import Activity
 from app.models.itinerary import Itinerary, ItineraryDay
 from app.models.user_profile import UserProfile
+from app.services.itinerary_builder import build_rule_based_itinerary
 from app.tools.openai_runtime import demo_fallback_enabled, generate_json
 
 
@@ -23,7 +24,7 @@ def plan_itinerary(
     profile: UserProfile,
 ) -> Itinerary:
     if demo_fallback_enabled():
-        return create_initial_itinerary(destination, days, activities)
+        return build_rule_based_itinerary(destination, days, budget, activities, weather, profile)
 
     activity_payload = [
         {
@@ -73,9 +74,9 @@ def _itinerary_from_plan(
         ]
         plan_days.append(
             ItineraryDay(
-                day=int(day_data.get("day", len(plan_days) + 1)),
+                day=_parse_day_number(day_data.get("day"), len(plan_days) + 1),
                 activities=selected,
-                notes=day_data.get("notes", []),
+                notes=_parse_notes(day_data.get("notes")),
             )
         )
 
@@ -83,3 +84,23 @@ def _itinerary_from_plan(
         return create_initial_itinerary(destination, requested_days, activities)
 
     return Itinerary(destination=destination, days=plan_days)
+
+
+def _parse_day_number(value, fallback: int) -> int:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        digits = "".join(char for char in value if char.isdigit())
+        if digits:
+            return int(digits)
+    return fallback
+
+
+def _parse_notes(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    return [str(value)]
