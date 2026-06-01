@@ -1,0 +1,18 @@
+app:
+  name: Adaptive AI Travel Agent
+  default_currency: EUR
+
+models:
+  planning: gpt-5-nano
+  preference: gpt-5-nano
+  embedding: text-embedding-3-small
+
+paths:
+  chroma: data/chromadb
+  user_profiles: data/user_profiles
+  travel_data: data/travel_data
+
+apis:
+  openweathermap_units: metric
+  opentipmap_radius_meters: 5000
+
