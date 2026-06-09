@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import datetime as dt
 from pathlib import Path
 
 import streamlit as st
@@ -16,12 +17,14 @@ from app.agents.request_agent import parse_travel_request
 from app.models.preference_source import PreferenceSource
 from app.models.travel_request import TravelRequest
 from app.orchestrator import build_travel_plan
-from app.rag.user_memory import load_user_profile
+from app.rag.user_memory import create_user_profile, list_user_ids, load_user_profile
+from app.tools.email_tool import fetch_email_sources
 from app.tools.openai_runtime import MissingLocalAIError, MissingOpenAIKeyError, ai_provider
 
 
 INTEREST_OPTIONS = [
     "food",
+    "street food",
     "culture",
     "history",
     "sport",
@@ -30,7 +33,11 @@ INTEREST_OPTIONS = [
     "anime",
     "nature",
     "local spots",
+    "hidden gems",
     "shopping",
+    "technology",
+    "photography",
+    "architecture",
     "luxury",
 ]
 
@@ -66,6 +73,27 @@ def _build_preference_sources(uploaded_files, travel_ratings: str, feedback: str
     return sources
 
 
+def _fetch_email_memory_sources(
+    enabled: bool,
+    host: str,
+    username: str,
+    password: str,
+    folder: str,
+    since: dt.date,
+    limit: int,
+) -> list[PreferenceSource]:
+    if not enabled:
+        return []
+    return fetch_email_sources(
+        host=host,
+        username=username,
+        password=password,
+        folder=folder,
+        since=since,
+        limit=limit,
+    )
+
+
 def _show_validation(label: str, validation) -> None:
     st.markdown(f"### {label}")
     error_count = getattr(validation, "error_count", None)
@@ -92,6 +120,46 @@ def _show_items(items: list[str], empty_text: str = "Keine Daten erkannt.") -> N
         return
     for item in cleaned:
         st.write(f"- {item}")
+
+
+def _select_user_profile() -> str:
+    st.subheader("User")
+    user_ids = list_user_ids()
+    if not user_ids:
+        create_user_profile("demo_user_1")
+        user_ids = ["demo_user_1"]
+
+    if "selected_user_id" not in st.session_state:
+        st.session_state.selected_user_id = user_ids[0]
+
+    if st.session_state.selected_user_id not in user_ids:
+        st.session_state.selected_user_id = user_ids[0]
+
+    selected_user = st.selectbox(
+        "Vorhandene User",
+        user_ids,
+        index=user_ids.index(st.session_state.selected_user_id),
+        key="user_selectbox",
+    )
+    st.session_state.selected_user_id = selected_user
+
+    with st.expander("+ Neuen User erstellen", expanded=False):
+        new_user_id = st.text_input("Neue User ID", placeholder="z.B. tokyo_user")
+        if st.button("User erstellen", use_container_width=True):
+            cleaned_user_id = _clean_user_id(new_user_id)
+            if cleaned_user_id:
+                create_user_profile(cleaned_user_id)
+                st.session_state.selected_user_id = cleaned_user_id
+                st.success(f"User '{cleaned_user_id}' wurde erstellt.")
+                st.rerun()
+            else:
+                st.warning("Bitte eine gueltige User ID eingeben.")
+
+    return st.session_state.selected_user_id
+
+
+def _clean_user_id(value: str) -> str:
+    return "".join(char for char in value.strip() if char.isalnum() or char in ("-", "_"))
 
 
 def _show_request_summary(parsed_request: TravelRequest) -> None:
@@ -183,6 +251,42 @@ def _show_ai_explanation(explanation: dict) -> None:
             _show_items(caveats)
 
 
+def _show_activity_evaluation(evaluation: dict) -> None:
+    removed = evaluation.get("removed") or []
+    if not removed:
+        st.success("Activity Evaluation Agent hat keine schwachen Kandidaten entfernt.")
+        return
+    with st.expander("Vom Activity Evaluation Agent entfernte Kandidaten", expanded=False):
+        st.dataframe(
+            [
+                {
+                    "name": item.get("name"),
+                    "category": item.get("category"),
+                    "source": item.get("source"),
+                    "score": item.get("score"),
+                    "reason": item.get("reason"),
+                }
+                for item in removed
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
+def _show_memory_context(memory_context) -> None:
+    st.markdown("### RAG Memory Context")
+    if not memory_context:
+        st.caption("Keine passenden Memory-Chunks aus ChromaDB abgerufen.")
+        return
+    with st.expander("Aus ChromaDB abgerufene User-Memory-Chunks", expanded=False):
+        for index, source in enumerate(memory_context, start=1):
+            preview = source.text[:500].strip()
+            if len(source.text) > 500:
+                preview += "..."
+            st.markdown(f"**{index}. {source.name}** ({source.source_type})")
+            st.write(preview)
+
+
 def _show_itinerary(itinerary, title: str) -> None:
     st.markdown(f"## {title}")
     for day in itinerary.days:
@@ -209,11 +313,11 @@ st.caption(f"AI Provider: {ai_provider()}")
 
 with st.sidebar:
     st.header("Nutzerprofil")
-    user_id = st.text_input("User ID", value="demo_user_1")
-    travel_style = st.selectbox("Reisestil", ["balanced", "relaxed", "adventure", "luxury", "budget"])
-    budget_preference = st.selectbox("Budgetpraeferenz", ["low", "medium", "high"])
-    interests = st.multiselect("Interessen", INTEREST_OPTIONS, default=["food", "culture"])
-    feedback = st.text_area("Neues Feedback optional", placeholder="z.B. mehr Food, weniger Museen")
+    user_id = _select_user_profile()
+    travel_style = "balanced"
+    budget_preference = "medium"
+    interests: list[str] = []
+    feedback = ""
 
     memory = load_user_profile(user_id)
     with st.expander("Gespeichertes Memory", expanded=False):
@@ -241,6 +345,22 @@ with rating_col:
         height=140,
     )
 
+with st.expander("Optional: E-Mail-Memory per IMAP verbinden", expanded=False):
+    use_email_memory = st.checkbox("E-Mails live aus Postfach laden")
+    email_col_1, email_col_2 = st.columns(2)
+    with email_col_1:
+        email_host = st.text_input("IMAP Host", placeholder="imap.gmail.com oder mail.htw-berlin.de")
+        email_username = st.text_input("E-Mail Benutzername")
+        email_password = st.text_input("E-Mail Passwort / App-Passwort", type="password")
+    with email_col_2:
+        email_folder = st.text_input("Ordner", value="INBOX")
+        email_since = st.date_input("Mails ab Datum", value=dt.date.today() - dt.timedelta(days=365))
+        email_limit = st.number_input("Max. Mails", min_value=1, max_value=50, value=10, step=1)
+    st.caption(
+        "Die App speichert nicht das Passwort. Geladene Mailtexte werden als Memory-Quelle "
+        "in ChromaDB eingebettet und beim Planen per RAG verwendet."
+    )
+
 st.subheader("Reiseparameter")
 request_text = st.text_area(
     "Freie Reiseanfrage",
@@ -252,6 +372,18 @@ generate = st.button("Reiseplan erstellen", type="primary")
 if generate:
     try:
         preference_sources = _build_preference_sources(uploaded_files, travel_ratings, feedback)
+        email_sources = _fetch_email_memory_sources(
+            enabled=use_email_memory,
+            host=email_host,
+            username=email_username,
+            password=email_password,
+            folder=email_folder,
+            since=email_since,
+            limit=int(email_limit),
+        )
+        preference_sources.extend(email_sources)
+        if email_sources:
+            st.success(f"{len(email_sources)} E-Mail(s) als Memory-Quelle geladen.")
         parsed_request = parse_travel_request(
             request_text,
             TravelRequest(
@@ -289,6 +421,7 @@ if generate:
     profile_col, weather_col, validation_col = st.columns(3)
     with profile_col:
         _show_profile_summary(result.profile)
+        _show_memory_context(result.memory_context)
     with weather_col:
         _show_weather_summary(result.weather)
     with validation_col:
@@ -304,6 +437,7 @@ if generate:
             _show_validation("Nach Optimierung", result.validation)
 
     st.markdown("## Gefundene Aktivitaeten")
+    _show_activity_evaluation(result.activity_evaluation)
     st.dataframe(
         [
             {
@@ -347,13 +481,5 @@ if generate:
         for item in ["API-Daten/Verfuegbarkeit pruefen", "Tickets reservieren", "Route offline speichern"]:
             st.write(f"- {item}")
 
-    map_points = [
-        {"lat": activity.latitude, "lon": activity.longitude}
-        for activity in result.activities
-        if activity.latitude is not None and activity.longitude is not None
-    ]
-    if map_points:
-        st.markdown("## Karte")
-        st.map(map_points)
 else:
     st.info("Gib Reiseparameter ein und erstelle den ersten Plan.")

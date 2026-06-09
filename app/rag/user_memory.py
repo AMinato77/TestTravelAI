@@ -28,6 +28,29 @@ def load_user_profile(user_id: str) -> UserProfile:
     return _profile_from_dict(data, user_id)
 
 
+def list_user_ids() -> list[str]:
+    """Return all saved user ids from data/user_profiles."""
+    if not MEMORY_DIR.exists():
+        return []
+
+    user_ids: list[str] = []
+    for path in MEMORY_DIR.glob("*.json"):
+        try:
+            with path.open("r", encoding="utf-8") as file:
+                data = json.load(file)
+            user_ids.append(data.get("user_id") or path.stem)
+        except (OSError, json.JSONDecodeError):
+            user_ids.append(path.stem)
+    return sorted(set(user_ids))
+
+
+def create_user_profile(user_id: str) -> UserProfile:
+    """Create a new empty user profile if it does not already exist."""
+    profile = load_user_profile(user_id)
+    save_user_profile(profile)
+    return profile
+
+
 def save_user_profile(profile: UserProfile) -> None:
     MEMORY_DIR.mkdir(parents=True, exist_ok=True)
     with _profile_path(profile.user_id).open("w", encoding="utf-8") as file:

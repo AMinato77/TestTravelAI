@@ -4,24 +4,14 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="6f8cfc59-74e7-4b7e-861b-87745aea2197" name="Changes" comment="1commitnumber">
+    <list default="true" id="6f8cfc59-74e7-4b7e-861b-87745aea2197" name="Changes" comment="Weiterrecommit">
       <change beforePath="$PROJECT_DIR$/.env.example" beforeDir="false" afterPath="$PROJECT_DIR$/.env.example" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/agents/planning_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/planning_agent.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/agents/preference_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/preference_agent.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/agents/request_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/request_agent.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/models/activity.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/models/activity.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/models/itinerary.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/models/itinerary.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/models/travel_request.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/models/travel_request.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/orchestrator.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/orchestrator.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/rag/retrieval.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/rag/retrieval.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/rag/user_memory.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/rag/user_memory.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/tools/openai_runtime.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tools/openai_runtime.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/tools/optimization_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tools/optimization_tool.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/tools/places_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tools/places_tool.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/tools/validation_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tools/validation_tool.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/streamlit_app.py" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/streamlit_app.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -30,7 +20,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="45" />
+    <option name="cachedIndexableFilesCount" value="139" />
   </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
@@ -53,23 +43,23 @@
   </component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="1.2674319199616955" />
-      <entry key="MS500" value="3.4488193121900284" />
-      <entry key="S2" value="10.052234966574034" />
-      <entry key="S5" value="21.89032121717155" />
-      <entry key="S10" value="38.11031185674827" />
-      <entry key="S30" value="63.781785474868386" />
-      <entry key="S60" value="82.70346616031678" />
-      <entry key="M2" value="123.28444937704216" />
-      <entry key="M5" value="232.3600453158937" />
-      <entry key="M10" value="376.44440413164443" />
-      <entry key="M15" value="495.812019384577" />
-      <entry key="M30" value="779.1334640573479" />
-      <entry key="H1" value="1173.7628274281572" />
-      <entry key="H2" value="1720.5800572394744" />
-      <entry key="H4" value="2449.6634184951413" />
-      <entry key="D1" value="4011.8812993254815" />
-      <entry key="W1" value="4480.8702507618755" />
+      <entry key="MS100" value="1.6135656928562976" />
+      <entry key="MS500" value="4.834860329035441" />
+      <entry key="S2" value="15.652583364071676" />
+      <entry key="S5" value="27.978075071216033" />
+      <entry key="S10" value="35.791946530694325" />
+      <entry key="S30" value="47.42164580162096" />
+      <entry key="S60" value="60.737357003191356" />
+      <entry key="M2" value="79.7370911930578" />
+      <entry key="M5" value="125.86502599448411" />
+      <entry key="M10" value="204.09351027654736" />
+      <entry key="M15" value="274.2624244464663" />
+      <entry key="M30" value="447.235860749923" />
+      <entry key="H1" value="769.704869829671" />
+      <entry key="H2" value="1508.6140137721745" />
+      <entry key="H4" value="2830.9270998991465" />
+      <entry key="D1" value="6422.731245087888" />
+      <entry key="W1" value="7686.88801871392" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
@@ -77,37 +67,37 @@
       <entry key="S2" value="0.0" />
       <entry key="S5" value="0.0" />
       <entry key="S10" value="0.0" />
-      <entry key="S30" value="1.4933938172888286E-281" />
-      <entry key="S60" value="3.864445390076827E-141" />
-      <entry key="M2" value="6.216466351615489E-71" />
-      <entry key="M5" value="8.268323019160491E-29" />
-      <entry key="M10" value="9.093031958131279E-15" />
-      <entry key="M15" value="4.356514310516249E-10" />
-      <entry key="M30" value="2.0872264636392074E-5" />
-      <entry key="H1" value="0.004568617365942591" />
-      <entry key="H2" value="0.06759154803629072" />
-      <entry key="H4" value="0.259983745715564" />
-      <entry key="D1" value="0.7988974459960504" />
-      <entry key="W1" value="0.9684342657840086" />
+      <entry key="S30" value="0.0" />
+      <entry key="S60" value="8.469677606171646E-250" />
+      <entry key="M2" value="2.910271053728696E-125" />
+      <entry key="M5" value="1.5331102099412815E-50" />
+      <entry key="M10" value="1.2381882772587242E-25" />
+      <entry key="M15" value="2.4842261286164635E-17" />
+      <entry key="M30" value="4.984201168307682E-9" />
+      <entry key="H1" value="7.059887512069771E-5" />
+      <entry key="H2" value="0.00840231367664205" />
+      <entry key="H4" value="0.09166413517097635" />
+      <entry key="D1" value="0.6714802460398932" />
+      <entry key="W1" value="0.9446924902501332" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="1.2423507662702138" />
-      <entry key="MS500" value="3.434075218181305" />
-      <entry key="S2" value="10.041161422633984" />
-      <entry key="S5" value="21.880695629060714" />
-      <entry key="S10" value="38.10196587449902" />
-      <entry key="S30" value="63.77713583132529" />
-      <entry key="S60" value="82.70043823923142" />
-      <entry key="M2" value="123.28216765168087" />
-      <entry key="M5" value="232.35828283235102" />
-      <entry key="M10" value="376.4429484376413" />
-      <entry key="M15" value="495.81072920400305" />
-      <entry key="M30" value="779.1324533848976" />
-      <entry key="H1" value="1173.7665977455288" />
-      <entry key="H2" value="1720.6470325834314" />
-      <entry key="H4" value="2449.922933459845" />
-      <entry key="D1" value="4012.6800581227285" />
-      <entry key="W1" value="4481.838662592589" />
+      <entry key="MS100" value="1.582744384955864" />
+      <entry key="MS500" value="4.815020026530851" />
+      <entry key="S2" value="15.633975759403608" />
+      <entry key="S5" value="27.963908363841938" />
+      <entry key="S10" value="35.78266900413294" />
+      <entry key="S30" value="47.41745263842202" />
+      <entry key="S60" value="60.73463005221401" />
+      <entry key="M2" value="79.73527784012366" />
+      <entry key="M5" value="125.8638429754057" />
+      <entry key="M10" value="204.09250768910042" />
+      <entry key="M15" value="274.2615114599336" />
+      <entry key="M30" value="447.23511544718866" />
+      <entry key="H1" value="769.7043128455944" />
+      <entry key="H2" value="1508.6218158960587" />
+      <entry key="H4" value="2831.018202202774" />
+      <entry key="D1" value="6423.402506306397" />
+      <entry key="W1" value="7687.832673401232" />
     </decayedShown>
   </component>
   <component name="ProjectColorInfo">{
@@ -118,32 +108,32 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "Python.places_tool.executor": "Run",
-    "Python.test_geoapify_places.executor": "Run",
-    "Python.test_itinerary_builder.executor": "Run",
-    "Python.test_itinerary_optimizer.executor": "Run",
-    "Python.test_travel_data_pipeline.executor": "Run",
-    "Python.test_weather.executor": "Run",
-    "RunOnceActivity.MCP Project settings loaded": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
-    "codeWithMe.voiceChat.enabledByDefault": "false",
-    "git-widget-placeholder": "main",
-    "ignore.virus.scanning.warn.message": "true",
-    "last_opened_file_path": "C:/Users/amint/PycharmProjects/TravelAI",
-    "node.js.detected.package.eslint": "true",
-    "node.js.detected.package.tslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "settings.editor.selected.configurable": "ml.llm.LLMThirdPartyAiProvidersConfigurable",
-    "vue.rearranger.settings.migration": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Python.places_tool.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_geoapify_places.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_itinerary_builder.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_itinerary_optimizer.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_travel_data_pipeline.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_weather.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;C:/Users/amint/PycharmProjects/TravelAI&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;ml.llm.LLMThirdPartyAiProvidersConfigurable&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
   <component name="RunManager" selected="Python.test_itinerary_optimizer">
     <configuration name="places_tool" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="TravelAI" />
@@ -309,7 +299,15 @@
       <option name="project" value="LOCAL" />
       <updated>1780275808545</updated>
     </task>
-    <option name="localTasksCounter" value="3" />
+    <task id="LOCAL-00003" summary="Weiterrecommit">
+      <option name="closed" value="true" />
+      <created>1780356957863</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1780356957863</updated>
+    </task>
+    <option name="localTasksCounter" value="4" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -318,6 +316,7 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="uuzeren" />
     <MESSAGE value="1commitnumber" />
-    <option name="LAST_COMMIT_MESSAGE" value="1commitnumber" />
+    <MESSAGE value="Weiterrecommit" />
+    <option name="LAST_COMMIT_MESSAGE" value="Weiterrecommit" />
   </component>
 </project>

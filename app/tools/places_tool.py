@@ -1,324 +1,455 @@
 from __future__ import annotations
 
-import json
+import math
 import os
 import re
-import unicodedata
 from pathlib import Path
 
 import requests
 
 from app.models.activity import Activity
-from app.services.activity_ranker import (
-    diversify_activities,
-    estimate_cost,
-    estimate_duration,
-    normalize_category,
-    rank_activities,
-)
 
 
-FALLBACK_ACTIVITIES = [
-    Activity("Local food market", "food", "Authentic street food and local snacks.", 18, 2, False),
-    Activity("Historic old town walk", "culture", "Self-guided walk through local architecture.", 0, 2, False),
-    Activity("Interactive game cafe", "gaming", "Board games, arcade machines, and casual food.", 25, 2, True),
-    Activity("Anime and comic shop area", "anime", "Specialty shops and pop culture stores.", 15, 1.5, True),
-    Activity("City museum", "culture", "Indoor museum option for bad weather.", 16, 2, True),
-    Activity("Local history museum", "culture", "Indoor exhibition focused on city history.", 14, 2, True),
-    Activity("Public art gallery", "culture", "Indoor gallery with accessible culture and art.", 12, 1.5, True),
-    Activity("Historic exhibition hall", "culture", "Indoor cultural stop with historical context.", 10, 1.5, True),
-    Activity("Night market district", "nightlife", "Evening food stalls and casual nightlife.", 30, 2.5, False),
-    Activity("Urban park viewpoint", "nature", "Relaxed outdoor break with city views.", 0, 1.5, False),
-]
+GOOGLE_PLACES_URL = "https://places.googleapis.com/v1/places:searchText"
+CACHE_DIR = Path("data/api_cache/google_places")
 
-CACHE_DIR = Path("data/api_cache/geoapify")
+INTEREST_QUERIES = {
+    "culture": [
+        "best museums in {destination}",
+        "best cultural attractions in {destination}",
+        "art galleries and cultural sites in {destination}",
+    ],
+    "history": [
+        "historical landmarks in {destination}",
+        "historic attractions in {destination}",
+        "historic architecture in {destination}",
+    ],
+    "food": [
+        "best local restaurants in {destination}",
+        "best local food experiences in {destination}",
+        "famous food spots in {destination}",
+    ],
+    "street food": [
+        "best street food markets in {destination}",
+        "street food vendors in {destination}",
+        "food markets in {destination}",
+    ],
+    "local spots": [
+        "hidden gems in {destination}",
+        "local neighborhoods in {destination}",
+        "local experiences in {destination}",
+    ],
+    "hidden gems": [
+        "hidden gems in {destination}",
+        "local experiences in {destination}",
+    ],
+    "nature": [
+        "best parks in {destination}",
+        "best viewpoints in {destination}",
+        "best outdoor attractions in {destination}",
+    ],
+    "nightlife": [
+        "best nightlife in {destination}",
+        "best bars in {destination}",
+        "live music venues in {destination}",
+    ],
+    "shopping": [
+        "best shopping streets in {destination}",
+        "local markets in {destination}",
+        "shopping districts in {destination}",
+    ],
+    "sport": [
+        "sports activities in {destination}",
+        "stadiums in {destination}",
+        "sports venues in {destination}",
+    ],
+    "gaming": [
+        "gaming arcades in {destination}",
+        "video game stores in {destination}",
+        "esports venues in {destination}",
+    ],
+    "anime": [
+        "anime shops in {destination}",
+        "manga stores in {destination}",
+        "otaku attractions in {destination}",
+    ],
+    "technology": [
+        "technology stores in {destination}",
+        "electronics districts in {destination}",
+        "computer stores in {destination}",
+    ],
+    "photography": [
+        "best photo spots in {destination}",
+        "scenic viewpoints in {destination}",
+        "instagrammable places in {destination}",
+    ],
+    "architecture": [
+        "architectural landmarks in {destination}",
+        "famous buildings in {destination}",
+        "historic architecture in {destination}",
+    ],
+}
 
 
-def search_places(destination: str, interests: list[str], limit: int = 12) -> list[Activity]:
+def search_places(destination: str, interests: list[str], limit: int = 20) -> list[Activity]:
     """
-    Search real places via Geoapify (when GEOAPIFY_API_KEY is configured).
-    Falls back to curated local activities without a key.
+    Search real activities with Google Places.
+
+    This is the only active activity API now. There is no Geoapify fallback and
+    no local demo fallback. If Google returns nothing, the app receives an empty
+    list and the issue becomes visible instead of hidden.
     """
-    api_key = os.getenv("GEOAPIFY_API_KEY")
+    api_key = os.getenv("GOOGLE_PLACES_API_KEY")
     if not api_key:
-        return _filter_fallback(interests, limit)
+        raise ValueError("GOOGLE_PLACES_API_KEY fehlt in der .env-Datei.")
 
-    lat_lon = _geocode_city(destination, api_key)
-    if not lat_lon:
-        return _filter_fallback(interests, limit)
+    activities: list[Activity] = []
+    queries = _queries_for_interests(destination, interests)
+    per_query_limit = max(5, min(20, math.ceil(limit / max(1, len(queries))) + 4))
 
-    lat, lon = lat_lon
-    places = _balanced_geoapify_places(
-        destination=destination,
-        lat=lat,
-        lon=lon,
-        interests=interests,
-        limit=limit,
-        api_key=api_key,
-    )
-    activities = [_activity_from_geoapify_place(place) for place in places]
-    activities = [activity for activity in activities if activity.name]
-    activities = _deduplicate_activities(activities)
-    ranked = rank_activities(activities, interests)
-    diversified = diversify_activities(ranked, limit)
-    return diversified or _filter_fallback(interests, limit)
+    for interest, query in queries:
+        places = _cached_google_text_search(api_key, query, per_query_limit)
+        for place in places:
+            activity = _place_to_activity(place, interest)
+            if activity:
+                activities.append(activity)
+
+    activities = _deduplicate(activities)
+    activities = _filter_low_quality(activities)
+    activities = _sort_by_quality(activities)
+    activities = _diversify(activities, limit)
+    return activities[:limit]
 
 
 def search_indoor_places(destination: str, limit: int = 8) -> list[Activity]:
-    api_key = os.getenv("GEOAPIFY_API_KEY")
-    if not api_key:
-        return [activity for activity in FALLBACK_ACTIVITIES if activity.indoor][:limit]
-
-    lat_lon = _geocode_city(destination, api_key)
-    if not lat_lon:
-        return [activity for activity in FALLBACK_ACTIVITIES if activity.indoor][:limit]
-
-    lat, lon = lat_lon
-    categories = "tourism.sights,tourism.attraction,commercial.shopping_mall,catering.cafe"
-    places = _cached_geoapify_places(
-        destination=f"{destination}_indoor",
-        lat=lat,
-        lon=lon,
-        categories=categories,
-        limit=max(limit * 3, 20),
-        api_key=api_key,
+    """Search real indoor alternatives for rainy days."""
+    return search_places(
+        destination=destination,
+        interests=["culture", "food", "shopping"],
+        limit=limit,
     )
-    activities = [_activity_from_geoapify_place(place) for place in places]
-    activities = [activity for activity in activities if activity.name]
-    activities.extend(activity for activity in FALLBACK_ACTIVITIES if activity.indoor)
-    activities = _deduplicate_activities(activities)
-    indoor_activities = [activity for activity in activities if activity.indoor]
-    ranked = rank_activities(indoor_activities or activities, ["culture", "local spots"])
-    return ranked[:limit]
 
 
-def _filter_fallback(interests: list[str], limit: int) -> list[Activity]:
-    matches = [activity for activity in FALLBACK_ACTIVITIES if activity.matches_any_interest(interests)]
-    return (matches or FALLBACK_ACTIVITIES)[:limit]
+def _queries_for_interests(destination: str, interests: list[str]) -> list[tuple[str, str]]:
+    queries: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    for interest in interests:
+        normalized = interest.strip().lower()
+        templates = INTEREST_QUERIES.get(normalized)
+        if not templates:
+            templates = ["best things to do related to " + normalized + " in {destination}"]
+        for template in templates:
+            query = template.format(destination=destination)
+            if query not in seen:
+                seen.add(query)
+                queries.append((normalized, query))
+
+    if not queries:
+        queries.append(("general", f"best things to do in {destination}"))
+    return queries
 
 
-def _looks_indoor(kinds: str) -> bool:
-    indoor_words = ["museums", "shops", "theatres", "galleries", "cinemas"]
-    return any(word in kinds.lower() for word in indoor_words)
-
-
-def _geocode_city(destination: str, api_key: str) -> tuple[float, float] | None:
-    response = requests.get(
-        "https://api.geoapify.com/v1/geocode/search",
-        params={"text": destination, "format": "json", "apiKey": api_key, "limit": 1},
-        timeout=20,
-    )
-    if response.status_code != 200:
-        return None
-    data = response.json()
-    results = data.get("results") or []
-    if not results:
-        return None
-    top = results[0]
-    lat = top.get("lat")
-    lon = top.get("lon")
-    if lat is None or lon is None:
-        return None
-    return float(lat), float(lon)
-
-
-def _geoapify_places(
-    *,
-    lat: float,
-    lon: float,
-    categories: str,
-    radius_m: int = 5000,
-    limit: int = 20,
-    api_key: str,
-) -> list[dict]:
-    response = requests.get(
-        "https://api.geoapify.com/v2/places",
-        params={
-            "categories": categories,
-            "filter": f"circle:{lon},{lat},{radius_m}",
-            "bias": f"proximity:{lon},{lat}",
-            "limit": limit,
-            "apiKey": api_key,
-        },
-        timeout=20,
-    )
-    response.raise_for_status()
-    data = response.json()
-    places: list[dict] = []
-    for feature in data.get("features", []):
-        props = feature.get("properties", {}) or {}
-        coords = feature.get("geometry", {}).get("coordinates", [None, None])
-        places.append(
-            {
-                "name": props.get("name"),
-                "categories": props.get("categories", []),
-                "address": props.get("formatted"),
-                "city": props.get("city"),
-                "country": props.get("country"),
-                "distance_m": props.get("distance"),
-                "lat": coords[1],
-                "lon": coords[0],
-                "opening_hours": props.get("opening_hours"),
-                "website": props.get("website"),
-                "place_id": props.get("place_id"),
-            }
-        )
-    return places
-
-
-def _cached_geoapify_places(
-    *,
-    destination: str,
-    lat: float,
-    lon: float,
-    categories: str,
-    limit: int,
-    api_key: str,
-) -> list[dict]:
-    cache_path = _cache_path(destination=destination, categories=categories, lat=lat, lon=lon, limit=limit)
+def _cached_google_text_search(api_key: str, query: str, limit: int) -> list[dict]:
+    cache_path = _cache_path(query, limit)
     if cache_path.exists():
+        import json
+
         with cache_path.open("r", encoding="utf-8") as file:
             return json.load(file)
 
-    places = _geoapify_places(lat=lat, lon=lon, categories=categories, limit=limit, api_key=api_key)
+    places = _google_text_search(api_key, query, limit)
+
+    import json
+
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     with cache_path.open("w", encoding="utf-8") as file:
         json.dump(places, file, ensure_ascii=True, indent=2)
     return places
 
 
-def _balanced_geoapify_places(
-    *,
-    destination: str,
-    lat: float,
-    lon: float,
-    interests: list[str],
-    limit: int,
-    api_key: str,
-) -> list[dict]:
-    grouped_categories = _category_groups_for_interests(interests)
-    per_group_limit = max(5, min(12, limit))
-    places: list[dict] = []
-    for label, categories in grouped_categories.items():
-        group_places = _cached_geoapify_places(
-            destination=f"{destination}_{label}",
-            lat=lat,
-            lon=lon,
-            categories=categories,
-            limit=per_group_limit,
-            api_key=api_key,
-        )
-        places.extend(group_places)
-    return places
-
-
-def _cache_path(*, destination: str, categories: str, lat: float, lon: float, limit: int) -> Path:
-    key = f"{destination}_{round(lat, 3)}_{round(lon, 3)}_{categories}_{limit}".lower()
-    safe_key = re.sub(r"[^a-z0-9]+", "_", key).strip("_")
-    return CACHE_DIR / f"{safe_key}.json"
-
-
-def _categories_for_interests(interests: list[str]) -> str:
-    # Keep categories conservative; invalid category strings cause Geoapify to return 400.
-    categories: set[str] = {"tourism.sights", "tourism.attraction", "catering.restaurant"}
-    normalized = {interest.strip().lower() for interest in interests}
-    if "food" in normalized or "street food" in normalized:
-        categories.update({"catering.fast_food", "catering.cafe", "catering.bar"})
-    # For now, keep culture/history under general tourism categories to avoid invalid strings.
-    if "nightlife" in normalized:
-        categories.update({"catering.bar"})
-    if "nature" in normalized:
-        categories.update({"leisure.park"})
-    return ",".join(sorted(categories))
-
-
-def _category_groups_for_interests(interests: list[str]) -> dict[str, str]:
-    normalized = {interest.strip().lower() for interest in interests}
-    groups = {
-        "culture": "tourism.sights,tourism.attraction",
-        "food": "catering.restaurant,catering.cafe,catering.fast_food,catering.bar",
+def _google_text_search(api_key: str, query: str, limit: int) -> list[dict]:
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": (
+            "places.displayName,"
+            "places.formattedAddress,"
+            "places.rating,"
+            "places.userRatingCount,"
+            "places.types,"
+            "places.primaryType,"
+            "places.location,"
+            "places.websiteUri,"
+            "places.googleMapsUri,"
+            "places.regularOpeningHours"
+        ),
     }
-    if "nature" in normalized:
-        groups["nature"] = "leisure.park"
-    if "nightlife" in normalized:
-        groups["nightlife"] = "catering.bar"
-    if any(value in normalized for value in ["local", "local spots", "hidden gems"]):
-        groups["local_mix"] = "tourism.sights,tourism.attraction,catering.restaurant,catering.cafe"
-    return groups
+    payload = {
+        "textQuery": query,
+        "languageCode": "en",
+        "maxResultCount": limit,
+    }
+
+    response = requests.post(GOOGLE_PLACES_URL, headers=headers, json=payload, timeout=20)
+    response.raise_for_status()
+    return response.json().get("places", [])
 
 
-def _activity_from_geoapify_place(place: dict) -> Activity:
-    name = place.get("name") or ""
-    categories = place.get("categories") or []
-    category = normalize_category(categories)
-    description_parts = []
-    if place.get("address"):
-        description_parts.append(place["address"])
-    if place.get("opening_hours"):
-        description_parts.append(f"Hours: {place['opening_hours']}")
-    description = " | ".join(description_parts)
-    indoor = any(
-        key in str(categories).lower()
-        for key in ["museum", "gallery", "theatre", "cinema", "shopping_mall", "cafe", "restaurant"]
-    )
+def _place_to_activity(place: dict, requested_interest: str) -> Activity | None:
+    name = (place.get("displayName") or {}).get("text")
+    if not name:
+        return None
+
+    types = _place_types(place)
+    category = _normalize_category(types, requested_interest, name)
+    location = place.get("location") or {}
+
     return Activity(
         name=name,
         category=category,
-        description=description,
-        cost=estimate_cost(category, categories),
-        duration_hours=estimate_duration(category),
-        indoor=indoor,
-        latitude=place.get("lat"),
-        longitude=place.get("lon"),
-        distance_m=place.get("distance_m"),
-        source="geoapify",
+        description=_build_description(place, category),
+        cost=_estimate_cost(category),
+        duration_hours=_estimate_duration(category),
+        indoor=_estimate_indoor(category, types),
+        latitude=location.get("latitude"),
+        longitude=location.get("longitude"),
+        distance_m=None,
+        source="google_places",
     )
 
 
-def _deduplicate_activities(activities: list[Activity]) -> list[Activity]:
-    unique: list[Activity] = []
-    seen_names: set[str] = set()
-    seen_nearby: set[tuple[str, float | None, float | None]] = set()
-    for activity in activities:
-        normalized_name = _normalize_name(activity.name)
-        nearby_key = (
-            normalized_name,
-            round(activity.latitude, 4) if activity.latitude is not None else None,
-            round(activity.longitude, 4) if activity.longitude is not None else None,
+def _place_types(place: dict) -> list[str]:
+    types = place.get("types") or []
+    primary_type = place.get("primaryType")
+    if primary_type and primary_type not in types:
+        return [primary_type, *types]
+    return types
+
+
+def _build_description(place: dict, category: str) -> str:
+    address = place.get("formattedAddress", "")
+    rating = place.get("rating")
+    review_count = place.get("userRatingCount")
+    maps_url = place.get("googleMapsUri")
+    website = place.get("websiteUri")
+    types = _place_types(place)
+
+    parts = [
+        f"Category: {category}",
+        f"Address: {address}" if address else "",
+        f"Rating: {rating}/5" if rating else "",
+        f"Reviews: {review_count}" if review_count else "",
+        f"Types: {', '.join(types[:6])}" if types else "",
+        f"Website: {website}" if website else "",
+        f"Google Maps: {maps_url}" if maps_url else "",
+    ]
+    return " | ".join(part for part in parts if part)
+
+
+def _normalize_category(types: list[str], requested_interest: str, name: str) -> str:
+    joined = " ".join(types).lower()
+    requested_interest = requested_interest.strip().lower()
+    name_lower = name.lower()
+
+    if requested_interest in {"anime", "gaming", "technology", "photography", "architecture", "local spots"}:
+        if _types_are_reasonable_for_interest(joined, requested_interest, name_lower):
+            return requested_interest
+
+    if any(value in joined for value in ["restaurant", "cafe", "bakery", "meal", "food"]):
+        if requested_interest == "gaming" and any(value in name_lower for value in ["game", "gaming", "esport", "e-sport"]):
+            return "gaming"
+        return "street_food" if requested_interest == "street food" else "food"
+    if any(value in joined for value in ["bar", "night_club"]):
+        return "nightlife"
+    if any(value in joined for value in ["park", "garden", "natural_feature", "hiking"]):
+        return "nature"
+    if any(
+        value in joined
+        for value in [
+            "museum",
+            "art_gallery",
+            "tourist_attraction",
+            "historical_landmark",
+            "church",
+            "castle",
+            "performing_arts_theater",
+        ]
+    ):
+        if requested_interest == "history":
+            return "history"
+        if requested_interest == "architecture":
+            return "architecture"
+        if requested_interest == "photography":
+            return "photography"
+        if requested_interest in {"anime", "technology"} and any(
+            value in name_lower for value in ["anime", "manga", "gundam", "akihabara", "electric"]
+        ):
+            return requested_interest
+        return "culture"
+    if any(value in joined for value in ["shopping_mall", "market", "store", "book_store"]):
+        if requested_interest == "anime" and any(value in joined for value in ["book_store", "comic", "toy_store"]):
+            return "anime"
+        if requested_interest == "technology" and any(value in joined for value in ["electronics", "computer", "store"]):
+            return "technology"
+        return "shopping"
+    if any(value in joined for value in ["stadium", "gym", "sports", "fitness"]):
+        return "sport"
+    if any(value in joined for value in ["movie_theater", "amusement_center", "video_game", "casino"]):
+        return "gaming"
+    return "place"
+
+
+def _types_are_reasonable_for_interest(joined_types: str, requested_interest: str, name: str) -> bool:
+    if requested_interest == "anime":
+        return any(value in joined_types for value in ["book_store", "store", "shopping", "tourist_attraction"]) or any(
+            value in name for value in ["anime", "manga", "gundam", "otaku"]
         )
-        if normalized_name in seen_names or nearby_key in seen_nearby:
+    if requested_interest == "gaming":
+        return any(value in joined_types for value in ["amusement", "store", "casino", "tourist_attraction"]) or any(
+            value in name for value in ["game", "gaming", "esport", "e-sport", "nintendo"]
+        )
+    if requested_interest == "technology":
+        return any(value in joined_types for value in ["electronics", "store", "shopping"]) or any(
+            value in name for value in ["tech", "camera", "computer", "akihabara", "electric"]
+        )
+    if requested_interest == "photography":
+        return any(value in joined_types for value in ["tourist_attraction", "park", "point_of_interest"])
+    if requested_interest == "architecture":
+        return any(value in joined_types for value in ["tourist_attraction", "church", "museum", "point_of_interest"])
+    if requested_interest == "local spots":
+        return any(value in joined_types for value in ["tourist_attraction", "restaurant", "cafe", "park", "point_of_interest"])
+    return False
+
+
+def _estimate_cost(category: str) -> float:
+    if category in {"food", "street_food"}:
+        return 25.0
+    if category in {"culture", "history", "architecture", "photography"}:
+        return 15.0
+    if category == "nature":
+        return 0.0
+    if category == "nightlife":
+        return 25.0
+    if category == "shopping":
+        return 20.0
+    if category == "sport":
+        return 20.0
+    if category in {"gaming", "anime", "technology", "local spots"}:
+        return 18.0
+    return 10.0
+
+
+def _estimate_duration(category: str) -> float:
+    if category in {"culture", "history", "architecture", "photography"}:
+        return 2.0
+    if category in {"food", "street_food"}:
+        return 1.5
+    if category == "nature":
+        return 1.5
+    if category == "nightlife":
+        return 2.5
+    if category in {"shopping", "sport", "gaming", "anime", "technology", "local spots"}:
+        return 2.0
+    return 1.5
+
+
+def _estimate_indoor(category: str, types: list[str]) -> bool:
+    joined = " ".join(types).lower()
+    if category in {"food", "street_food", "nightlife", "shopping", "gaming", "anime", "technology"}:
+        return True
+    if any(value in joined for value in ["museum", "art_gallery", "store", "restaurant", "cafe", "theater"]):
+        return True
+    if category == "nature" or "park" in joined:
+        return False
+    return False
+
+
+def _filter_low_quality(activities: list[Activity]) -> list[Activity]:
+    result: list[Activity] = []
+    for activity in activities:
+        if len(activity.name.strip()) < 3:
             continue
-        seen_names.add(normalized_name)
-        seen_nearby.add(nearby_key)
-        unique.append(activity)
-    return unique
+        description = activity.description.lower()
+        if any(value in description for value in ["lodging", "hotel"]):
+            continue
+        if activity.category == "place":
+            continue
+        result.append(activity)
+    return result
 
 
-def _normalize_name(name: str) -> str:
-    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
-    return re.sub(r"[^a-z0-9]+", " ", ascii_name.lower()).strip()
+def _sort_by_quality(activities: list[Activity]) -> list[Activity]:
+    return sorted(activities, key=_score_activity, reverse=True)
 
 
-def _search_places_raw(
-    lat: float,
-    lon: float,
-    categories: str = "tourism.sights,tourism.attraction,catering.restaurant",
-    radius: int = 5000,
-    limit: int = 20,
-) -> list[dict]:
-    api_key = os.getenv("GEOAPIFY_API_KEY")
-    if not api_key:
-        raise ValueError("GEOAPIFY_API_KEY fehlt in der .env-Datei.")
-    return _geoapify_places(lat=lat, lon=lon, categories=categories, radius_m=radius, limit=limit, api_key=api_key)
+def _score_activity(activity: Activity) -> float:
+    text = activity.description.lower()
+    rating = _extract_float(text, "rating: ", "/5")
+    reviews = _extract_int(text, "reviews: ")
+
+    score = 0.0
+    if rating:
+        score += rating * 10
+    if reviews:
+        score += min(math.log10(reviews + 1) * 8, 40)
+    if activity.category in {"culture", "history", "food", "street_food", "nature", "architecture", "photography"}:
+        score += 5
+    if "google maps:" in text:
+        score += 3
+    if "website:" in text:
+        score += 2
+    return score
 
 
-if __name__ == "__main__":
-    places = _search_places_raw(
-        lat=41.3874,
-        lon=2.1686,
-        categories="tourism.sights,tourism.attraction,catering.restaurant",
-        radius=5000,
-        limit=10,
-    )
-    for place in places:
-        print(place)
+def _extract_float(text: str, start: str, end: str) -> float:
+    if start not in text:
+        return 0.0
+    try:
+        value = text.split(start, 1)[1].split(end, 1)[0]
+        return float(value)
+    except ValueError:
+        return 0.0
+
+
+def _extract_int(text: str, start: str) -> int:
+    if start not in text:
+        return 0
+    try:
+        value = text.split(start, 1)[1].split("|", 1)[0].strip()
+        return int(value)
+    except ValueError:
+        return 0
+
+
+def _deduplicate(activities: list[Activity]) -> list[Activity]:
+    seen: set[str] = set()
+    result: list[Activity] = []
+    for activity in activities:
+        key = activity.name.lower().strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(activity)
+    return result
+
+
+def _diversify(activities: list[Activity], limit: int) -> list[Activity]:
+    max_per_category = max(3, limit // 2)
+    counts: dict[str, int] = {}
+    selected: list[Activity] = []
+
+    for activity in activities:
+        count = counts.get(activity.category, 0)
+        if count >= max_per_category:
+            continue
+        selected.append(activity)
+        counts[activity.category] = count + 1
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def _cache_path(query: str, limit: int) -> Path:
+    safe_query = re.sub(r"[^a-z0-9]+", "_", query.lower()).strip("_")
+    return CACHE_DIR / f"{safe_query}_{limit}.json"

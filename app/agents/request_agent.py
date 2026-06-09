@@ -8,12 +8,20 @@ from app.tools.openai_runtime import demo_fallback_enabled, generate_json
 
 KNOWN_INTERESTS = [
     "food",
+    "street food",
     "gaming",
     "anime",
     "culture",
+    "history",
     "local spots",
+    "hidden gems",
     "nightlife",
     "nature",
+    "sport",
+    "shopping",
+    "technology",
+    "photography",
+    "architecture",
     "luxury",
     "adventure",
 ]
@@ -28,6 +36,11 @@ INTEREST_ALIASES = {
     "sport": "sport",
     "natur": "nature",
     "lokale spots": "local spots",
+    "technik": "technology",
+    "technologie": "technology",
+    "architektur": "architecture",
+    "fotografie": "photography",
+    "streetfood": "street food",
 }
 
 

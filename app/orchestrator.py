@@ -5,15 +5,16 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
+from app.agents.activity_evaluation_agent import evaluate_activities
 from app.agents.explanation_agent import explain_travel_plan
 from app.agents.planning_agent import plan_itinerary
 from app.agents.preference_agent import extract_preferences
 from app.models.activity import Activity
-from app.models.itinerary import Itinerary, ItineraryDay, ValidationResult
+from app.models.itinerary import Itinerary, ValidationResult
 from app.models.preference_source import PreferenceSource
 from app.models.user_profile import UserProfile
+from app.rag.memory_retrieval import build_memory_query, ingest_preference_sources, retrieve_user_memory
 from app.rag.preference_documents import load_preference_sources, save_preference_sources
-from app.rag.retrieval import retrieve_activities
 from app.rag.user_memory import load_user_profile, update_user_profile
 from app.tools.optimization_tool import optimize_itinerary
 from app.tools.places_tool import search_places
@@ -34,6 +35,8 @@ class TravelPlanResult:
     loaded_memory: UserProfile
     workflow_steps: list[str]
     explanation: dict
+    activity_evaluation: dict
+    memory_context: list[PreferenceSource]
 
 
 def build_travel_plan(
@@ -49,12 +52,15 @@ def build_travel_plan(
     manual_avoid: list[str] | None = None,
 ) -> TravelPlanResult:
     load_dotenv()
-    workflow_steps = ["Loaded environment and started agent workflow."]
+    workflow_steps = ["Started travel planning workflow."]
 
+    # 1. Load old user memory and combine it with the current form input.
     memory_profile = load_user_profile(user_id)
-    workflow_steps.append(f"Loaded saved memory for user_id={user_id}.")
+    workflow_steps.append(f"Loaded saved JSON memory for user_id={user_id}.")
     manual_interests = memory_profile.merged_interests(manual_interests)
     manual_avoid = manual_avoid or []
+
+    # 2. Save new uploads and retrieve relevant chunks with ChromaDB RAG.
     new_sources = preference_sources or []
     saved_sources = load_preference_sources(user_id)
     all_sources = [*saved_sources, *new_sources]
@@ -62,13 +68,32 @@ def build_travel_plan(
     workflow_steps.append(
         f"Loaded {len(saved_sources)} saved preference source(s) and {len(new_sources)} new upload(s)."
     )
+    memory_context: list[PreferenceSource] = []
+    if all_sources:
+        try:
+            chunk_count = ingest_preference_sources(user_id, all_sources)
+            workflow_steps.append(f"Stored {chunk_count} embedded user-memory chunk(s) in ChromaDB.")
+            memory_query = build_memory_query(
+                destination=destination,
+                interests=manual_interests,
+                avoid=manual_avoid,
+                travel_style=travel_style,
+            )
+            retrieved_memory = retrieve_user_memory(user_id, memory_query)
+            memory_context = [memory.source for memory in retrieved_memory]
+            workflow_steps.append(f"ChromaDB RAG returned {len(memory_context)} relevant memory chunk(s).")
+        except Exception as exc:
+            workflow_steps.append(f"Memory RAG skipped because ChromaDB/embeddings failed: {exc}")
+    preference_context = memory_context or all_sources
+
+    # 3. Let GPT turn uploaded notes, ratings, and form values into a profile.
     extracted_profile = extract_preferences(
         manual_interests=manual_interests,
         travel_style=travel_style,
         budget_preference=budget_preference,
-        preference_sources=all_sources,
+        preference_sources=preference_context,
     )
-    workflow_steps.append("Preference Agent extracted the current user profile.")
+    workflow_steps.append("Preference Agent created the current user profile.")
     profile = update_user_profile(
         existing=memory_profile,
         extracted=extracted_profile,
@@ -78,21 +103,33 @@ def build_travel_plan(
         feedback=feedback,
         uploaded_sources=[source.name for source in new_sources],
     )
-    workflow_steps.append("Updated and saved persistent User Preference Memory.")
+    workflow_steps.append("Saved updated user profile as JSON memory.")
     interests = profile.merged_interests(manual_interests)
 
+    # 4. Get real place candidates from Google Places.
     external_activities = search_places(destination, interests)
-    workflow_steps.append(f"Retrieved {len(external_activities)} external place candidates.")
-    rag_activities = retrieve_activities(interests, destination)
-    workflow_steps.append(f"Retrieved {len(rag_activities)} RAG/local activity candidates.")
-    activities_before_filter = _deduplicate_activities([*external_activities, *rag_activities])
+    workflow_steps.append(f"Google Places returned {len(external_activities)} external place candidate(s).")
+    activities_before_filter = _deduplicate_activities(external_activities)
     activities = _filter_avoided_activities(activities_before_filter, profile.avoid)
     removed_count = len(activities_before_filter) - len(activities)
     if removed_count:
         workflow_steps.append(f"Removed {removed_count} activity candidate(s) because of user avoid preferences.")
+    # 5. Let GPT judge whether the candidate activities really fit the user.
+    evaluated_activities, activity_evaluation = evaluate_activities(
+        destination=destination,
+        activities=activities,
+        profile=profile,
+        budget=budget,
+    )
+    if evaluated_activities:
+        activities = evaluated_activities
+    workflow_steps.append(
+        f"Activity Evaluation Agent kept {len(activities)} candidate(s) and removed "
+        f"{len(activity_evaluation.get('removed', []))} weak match(es)."
+    )
+    # 6. Get weather, create a plan, validate it, and optimize if needed.
     weather = get_weather(destination, days=days)
     workflow_steps.append("Weather tool returned travel weather context.")
-
     itinerary = plan_itinerary(destination, days, budget, activities, weather, profile)
     workflow_steps.append("Planning Agent generated the first itinerary.")
     validation = validate_itinerary(itinerary, budget, weather, profile)
@@ -110,6 +147,7 @@ def build_travel_plan(
             f"Optimization Agent adjusted the itinerary and validation ran again (attempt {attempt})."
         )
 
+    # 7. Let GPT explain the final result for the UI.
     explanation = explain_travel_plan(
         itinerary=itinerary,
         profile=profile,
@@ -132,22 +170,9 @@ def build_travel_plan(
         loaded_memory=memory_profile,
         workflow_steps=workflow_steps,
         explanation=explanation,
+        activity_evaluation=activity_evaluation,
+        memory_context=memory_context,
     )
-
-
-def _generate_itinerary(destination: str, days: int, activities: list[Activity]) -> Itinerary:
-    plan_days: list[ItineraryDay] = []
-    days = max(1, min(days, 14))
-    activities_per_day = 3
-
-    for day_number in range(1, days + 1):
-        start = (day_number - 1) * activities_per_day
-        selected = activities[start : start + activities_per_day]
-        if not selected:
-            selected = activities[:activities_per_day]
-        plan_days.append(ItineraryDay(day=day_number, activities=selected))
-
-    return Itinerary(destination=destination, days=plan_days)
 
 
 def _deduplicate_activities(activities: list[Activity]) -> list[Activity]:
