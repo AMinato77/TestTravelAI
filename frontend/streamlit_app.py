@@ -280,11 +280,43 @@ def _show_memory_context(memory_context) -> None:
         return
     with st.expander("Aus ChromaDB abgerufene User-Memory-Chunks", expanded=False):
         for index, source in enumerate(memory_context, start=1):
-            preview = source.text[:500].strip()
-            if len(source.text) > 500:
-                preview += "..."
             st.markdown(f"**{index}. {source.name}** ({source.source_type})")
-            st.write(preview)
+            facts = _profile_memory_facts(source.text) if source.source_type == "profile_snapshot" else []
+            if facts:
+                st.caption("Aus ChromaDB retrieved und fuer die Planung beruecksichtigt:")
+                for fact in facts:
+                    st.write(f"- {fact}")
+            else:
+                st.write(_memory_preview(source.text))
+
+
+def _profile_memory_facts(text: str) -> list[str]:
+    labels = {
+        "Interests": "Interessen",
+        "Avoid": "Meiden",
+        "Travel style": "Reisestil",
+        "Budget preference": "Budgetpraeferenz",
+        "Past destinations": "Bisherige Ziele",
+        "Feedback history": "Feedback",
+        "Source notes": "Quellnotizen",
+    }
+    facts: list[str] = []
+    for raw_line in text.splitlines():
+        if ":" not in raw_line:
+            continue
+        key, value = raw_line.split(":", 1)
+        label = labels.get(key.strip())
+        value = value.strip()
+        if label and value and value.lower() != "none":
+            facts.append(f"{label}: {value}")
+    return facts
+
+
+def _memory_preview(text: str) -> str:
+    preview = text[:500].strip()
+    if len(text) > 500:
+        preview += "..."
+    return preview
 
 
 def _show_itinerary(itinerary, title: str) -> None:
@@ -327,7 +359,7 @@ with st.sidebar:
         _show_items(memory.interests)
         st.markdown("**Bisherige Ziele**")
         _show_items(memory.past_destinations)
-        with st.expander("Memory JSON", expanded=False):
+        with st.expander("Chroma Memory Snapshot", expanded=False):
             st.json(memory.to_dict())
 
 st.subheader("Preference Learning")

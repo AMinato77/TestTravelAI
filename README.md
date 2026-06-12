@@ -80,10 +80,30 @@ Quick test:
 
 ## User Memory
 
-Profile werden lokal unter `data/user_profiles/<user_id>.json` gespeichert.
-Beim naechsten Plan werden fruehere Interessen, Reiseziele und Feedback wieder
-geladen und mit der neuen Anfrage kombiniert.
+User Memory wird im aktiven Workflow ueber ChromaDB und OpenAI Embeddings
+gespeichert. Profile, Uploads, Reise-Notizen, Bewertungen, Feedback und
+optionale E-Mail-Quellen werden als eingebettete Memory-Dokumente in
+`data/chromadb` abgelegt.
 
-Upload-Quellen wie Chat-Exports, Reise-Notizen und Bewertungen werden unter
-`data/user_documents/<user_id>/index.jsonl` abgelegt und bei spaeteren Planungen
-wieder in die Preference Extraction einbezogen.
+Beim naechsten Plan wird eine semantische Query aus Ziel, Interessen,
+Avoid-Praeferenzen und Reisestil gebaut. ChromaDB liefert relevante
+Memory-Chunks zurueck, die in die Preference Extraction und Planung
+einbezogen werden.
+
+Wichtig: Fuer echtes RAG-Memory ist `OPENAI_API_KEY` erforderlich, weil die
+Embeddings ueber `text-embedding-3-small` erzeugt werden.
+
+Memory inspizieren:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\inspect_chroma_memory.py --user Paris_demo --limit 10
+```
+
+## Aktivitaetensuche
+
+Die App normalisiert Reiseziele wie `Wien`/`Vienna` oder `Rom`/`Rome`, bevor
+APIs und Memory aktualisiert werden. Google Places wird nicht mehr nur ueber
+starre Keywords abgefragt: Im OpenAI-Modus erstellt ein Query-Planning-Agent
+passende Google-Places-Textqueries aus Ziel, Interessen und Avoid-Praeferenzen.
+Wenn der LLM-Aufruf fehlschlaegt oder Demo-Modus aktiv ist, nutzt die App den
+deterministischen Template-Fallback.

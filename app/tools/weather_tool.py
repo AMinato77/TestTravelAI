@@ -4,6 +4,8 @@ import os
 
 import requests
 
+from app.services.destination_normalizer import normalize_destination
+
 
 BASE_URL = "https://api.weatherapi.com/v1/forecast.json"
 RAIN_THRESHOLD = 60
@@ -26,6 +28,7 @@ def get_weather(destination: str, days: int = 3) -> dict:
 def get_weather_forecast(city: str, days: int = 3) -> list[dict]:
     api_key = _weather_api_key()
     days = max(1, min(int(days), 14))
+    city = normalize_destination(city)
     if not api_key:
         return _fallback_forecast(city, days)
 

@@ -72,9 +72,9 @@ def extract_preferences(
         interests=_clean_interests(data.get("interests", manual_interests)),
         budget_preference=data.get("budget_preference", budget_preference),
         travel_style=data.get("travel_style", travel_style),
-        avoid=data.get("avoid", []),
-        source_notes=data.get("source_notes", ["Preferences extracted from uploaded user sources."]),
-        uploaded_sources=[source.name for source in preference_sources],
+        avoid=_as_list(data.get("avoid")),
+        source_notes=_as_list(data.get("source_notes")) or ["Preferences extracted from user memory and current inputs."],
+        uploaded_sources=[],
     )
 
 
@@ -120,17 +120,27 @@ def _extract_demo_preferences(
         source_notes=[
             f"Analyzed {len(preference_sources)} uploaded preference source(s) in demo mode."
         ],
-        uploaded_sources=[source.name for source in preference_sources],
+        uploaded_sources=[],
     )
 
 
-def _clean_interests(values: list[str]) -> list[str]:
+def _clean_interests(values) -> list[str]:
     cleaned: list[str] = []
     seen: set[str] = set()
-    for value in values:
+    for value in _as_list(values):
         normalized = str(value).strip().lower()
         if not normalized or normalized in NON_INTEREST_TERMS or normalized in seen:
             continue
         seen.add(normalized)
         cleaned.append(normalized)
     return cleaned
+
+
+def _as_list(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    return [str(value)]

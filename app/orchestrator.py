@@ -14,8 +14,9 @@ from app.models.itinerary import Itinerary, ValidationResult
 from app.models.preference_source import PreferenceSource
 from app.models.user_profile import UserProfile
 from app.rag.memory_retrieval import build_memory_query, ingest_preference_sources, retrieve_user_memory
-from app.rag.preference_documents import load_preference_sources, save_preference_sources
+from app.rag.preference_documents import load_preference_sources
 from app.rag.user_memory import load_user_profile, update_user_profile
+from app.services.destination_normalizer import normalize_destination
 from app.tools.optimization_tool import optimize_itinerary
 from app.tools.places_tool import search_places
 from app.tools.validation_tool import validate_itinerary
@@ -53,26 +54,33 @@ def build_travel_plan(
 ) -> TravelPlanResult:
     load_dotenv()
     workflow_steps = ["Started travel planning workflow."]
+    original_destination = destination
+    destination = normalize_destination(destination)
+    if original_destination.strip() and destination != original_destination.strip():
+        workflow_steps.append(f"Normalized destination '{original_destination}' to '{destination}'.")
 
     # 1. Load old user memory and combine it with the current form input.
     memory_profile = load_user_profile(user_id)
-    workflow_steps.append(f"Loaded saved JSON memory for user_id={user_id}.")
+    workflow_steps.append(f"Loaded saved ChromaDB profile memory for user_id={user_id}.")
     manual_interests = memory_profile.merged_interests(manual_interests)
-    manual_avoid = manual_avoid or []
+    manual_avoid = _merge_unique(memory_profile.avoid, manual_avoid or [])
 
-    # 2. Save new uploads and retrieve relevant chunks with ChromaDB RAG.
+    # 2. Embed new uploads and retrieve relevant chunks with ChromaDB RAG.
     new_sources = preference_sources or []
     saved_sources = load_preference_sources(user_id)
     all_sources = [*saved_sources, *new_sources]
-    save_preference_sources(user_id, new_sources)
     workflow_steps.append(
-        f"Loaded {len(saved_sources)} saved preference source(s) and {len(new_sources)} new upload(s)."
+        f"Loaded {len(saved_sources)} stored preference-memory chunk(s) and {len(new_sources)} new source(s)."
     )
     memory_context: list[PreferenceSource] = []
-    if all_sources:
+    if new_sources:
         try:
-            chunk_count = ingest_preference_sources(user_id, all_sources)
-            workflow_steps.append(f"Stored {chunk_count} embedded user-memory chunk(s) in ChromaDB.")
+            chunk_count = ingest_preference_sources(user_id, new_sources)
+            workflow_steps.append(f"Stored {chunk_count} new embedded user-memory chunk(s) in ChromaDB.")
+        except Exception as exc:
+            workflow_steps.append(f"New memory sources were not embedded because ChromaDB/embeddings failed: {exc}")
+    if _profile_has_memory(memory_profile) or all_sources or new_sources:
+        try:
             memory_query = build_memory_query(
                 destination=destination,
                 interests=manual_interests,
@@ -103,17 +111,18 @@ def build_travel_plan(
         feedback=feedback,
         uploaded_sources=[source.name for source in new_sources],
     )
-    workflow_steps.append("Saved updated user profile as JSON memory.")
+    workflow_steps.append("Saved updated user profile as embedded ChromaDB memory.")
     interests = profile.merged_interests(manual_interests)
 
     # 4. Get real place candidates from Google Places.
-    external_activities = search_places(destination, interests)
+    external_activities = search_places(destination, interests, avoid=profile.avoid)
     workflow_steps.append(f"Google Places returned {len(external_activities)} external place candidate(s).")
     activities_before_filter = _deduplicate_activities(external_activities)
-    activities = _filter_avoided_activities(activities_before_filter, profile.avoid)
-    removed_count = len(activities_before_filter) - len(activities)
-    if removed_count:
-        workflow_steps.append(f"Removed {removed_count} activity candidate(s) because of user avoid preferences.")
+    activities, hard_removed_activities = _split_avoided_activities(activities_before_filter, profile.avoid)
+    if hard_removed_activities:
+        workflow_steps.append(
+            f"Removed {len(hard_removed_activities)} activity candidate(s) because of user avoid preferences."
+        )
     # 5. Let GPT judge whether the candidate activities really fit the user.
     evaluated_activities, activity_evaluation = evaluate_activities(
         destination=destination,
@@ -123,6 +132,11 @@ def build_travel_plan(
     )
     if evaluated_activities:
         activities = evaluated_activities
+    if hard_removed_activities:
+        activity_evaluation["removed"] = [
+            *_removed_activity_payload(hard_removed_activities),
+            *(activity_evaluation.get("removed") or []),
+        ]
     workflow_steps.append(
         f"Activity Evaluation Agent kept {len(activities)} candidate(s) and removed "
         f"{len(activity_evaluation.get('removed', []))} weak match(es)."
@@ -187,15 +201,69 @@ def _deduplicate_activities(activities: list[Activity]) -> list[Activity]:
     return unique
 
 
-def _filter_avoided_activities(activities: list[Activity], avoid: list[str]) -> list[Activity]:
+def _profile_has_memory(profile: UserProfile) -> bool:
+    return bool(
+        profile.interests
+        or profile.avoid
+        or profile.past_destinations
+        or profile.feedback_history
+        or profile.uploaded_sources
+        or profile.source_notes
+    )
+
+
+def _merge_unique(*groups: list[str]) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for value in group:
+            normalized = str(value).strip().lower()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            values.append(normalized)
+    return values
+
+
+def _split_avoided_activities(activities: list[Activity], avoid: list[str]) -> tuple[list[Activity], list[Activity]]:
     if not avoid:
-        return activities
-    return [activity for activity in activities if not _activity_conflicts_with_avoid(activity, avoid)]
+        return activities, []
+
+    kept: list[Activity] = []
+    removed: list[Activity] = []
+    for activity in activities:
+        if _activity_conflicts_with_avoid(activity, avoid):
+            removed.append(activity)
+        else:
+            kept.append(activity)
+    return kept, removed
+
+
+def _removed_activity_payload(activities: list[Activity]) -> list[dict]:
+    return [
+        {
+            "name": activity.name,
+            "category": activity.category,
+            "source": activity.source,
+            "score": 0,
+            "reason": "Removed before planning because it conflicts with user avoid preferences.",
+        }
+        for activity in activities
+    ]
 
 
 def _activity_conflicts_with_avoid(activity: Activity, avoid: list[str]) -> bool:
     haystack = f"{activity.name} {activity.category} {activity.description}".lower()
     avoid_text = " ".join(avoid).lower()
+    category = activity.category.strip().lower()
+    normalized_avoid = {term.strip().lower() for term in avoid if term.strip()}
+
+    if category in normalized_avoid:
+        return True
+    if category in {"culture", "history", "architecture", "photography"} and any(
+        term in normalized_avoid for term in {"culture", "museum", "museums", "history", "sightseeing"}
+    ):
+        return True
     if any(term in avoid_text for term in ["food", "restaurant", "cafe"]):
         return activity.category == "food" or any(
             term in haystack for term in ["restaurant", "food", "cafe", "café", "creperie", "crêperie"]

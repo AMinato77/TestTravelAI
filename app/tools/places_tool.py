@@ -8,6 +8,8 @@ from pathlib import Path
 import requests
 
 from app.models.activity import Activity
+from app.services.destination_normalizer import normalize_destination
+from app.tools.openai_runtime import demo_fallback_enabled, generate_json
 
 
 GOOGLE_PLACES_URL = "https://places.googleapis.com/v1/places:searchText"
@@ -91,7 +93,12 @@ INTEREST_QUERIES = {
 }
 
 
-def search_places(destination: str, interests: list[str], limit: int = 20) -> list[Activity]:
+def search_places(
+    destination: str,
+    interests: list[str],
+    limit: int = 20,
+    avoid: list[str] | None = None,
+) -> list[Activity]:
     """
     Search real activities with Google Places.
 
@@ -103,8 +110,10 @@ def search_places(destination: str, interests: list[str], limit: int = 20) -> li
     if not api_key:
         raise ValueError("GOOGLE_PLACES_API_KEY fehlt in der .env-Datei.")
 
+    destination = normalize_destination(destination)
+    avoid = avoid or []
     activities: list[Activity] = []
-    queries = _queries_for_interests(destination, interests)
+    queries = _queries_for_interests(destination, interests, avoid=avoid)
     per_query_limit = max(5, min(20, math.ceil(limit / max(1, len(queries))) + 4))
 
     for interest, query in queries:
@@ -130,7 +139,73 @@ def search_indoor_places(destination: str, limit: int = 8) -> list[Activity]:
     )
 
 
-def _queries_for_interests(destination: str, interests: list[str]) -> list[tuple[str, str]]:
+def _queries_for_interests(
+    destination: str,
+    interests: list[str],
+    avoid: list[str] | None = None,
+) -> list[tuple[str, str]]:
+    destination = normalize_destination(destination)
+    ai_queries = _ai_queries_for_interests(destination, interests, avoid or [])
+    if ai_queries:
+        return ai_queries
+
+    return _template_queries_for_interests(destination, interests)
+
+
+def _ai_queries_for_interests(
+    destination: str,
+    interests: list[str],
+    avoid: list[str],
+) -> list[tuple[str, str]]:
+    if demo_fallback_enabled():
+        return []
+    try:
+        data = generate_json(
+            system_prompt=(
+                "You are a Google Places query planning agent for a travel app. "
+                "Create precise text search queries for real activities in the destination. "
+                "Use only the provided destination and user interests. "
+                "Respect avoid preferences by not creating queries for avoided topics. "
+                "Return strict JSON with key queries. queries is a list of objects with "
+                "keys interest and query. Keep 1-3 queries per important interest, max 8 total. "
+                "Queries must be useful for Google Places Text Search and include the destination."
+            ),
+            payload={
+                "destination": destination,
+                "interests": interests,
+                "avoid": avoid,
+                "examples": [
+                    {"interest": "gaming", "query": f"gaming arcades in {destination}"},
+                    {"interest": "food", "query": f"local restaurants in {destination}"},
+                ],
+            },
+            model_env="OPENAI_PLACES_QUERY_MODEL",
+        )
+    except Exception:
+        return []
+
+    queries: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for item in data.get("queries", []):
+        if not isinstance(item, dict):
+            continue
+        interest = str(item.get("interest") or "general").strip().lower()
+        query = str(item.get("query") or "").strip()
+        if not query or destination.lower() not in query.lower():
+            continue
+        if _query_conflicts_with_avoid(query, avoid):
+            continue
+        key = query.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        queries.append((interest, query))
+        if len(queries) >= 8:
+            break
+    return queries
+
+
+def _template_queries_for_interests(destination: str, interests: list[str]) -> list[tuple[str, str]]:
     queries: list[tuple[str, str]] = []
     seen: set[str] = set()
 
@@ -148,6 +223,21 @@ def _queries_for_interests(destination: str, interests: list[str]) -> list[tuple
     if not queries:
         queries.append(("general", f"best things to do in {destination}"))
     return queries
+
+
+def _query_conflicts_with_avoid(query: str, avoid: list[str]) -> bool:
+    text = query.lower()
+    avoid_text = " ".join(avoid).lower()
+    if any(term in avoid_text for term in ["culture", "museum", "museums"]):
+        if any(term in text for term in ["museum", "museums", "cultural", "culture", "gallery", "historic"]):
+            return True
+    if any(term in avoid_text for term in ["food", "restaurant", "cafe"]):
+        if any(term in text for term in ["food", "restaurant", "cafe", "dining"]):
+            return True
+    if any(term in avoid_text for term in ["nightlife", "club"]):
+        if any(term in text for term in ["nightlife", "club", "bar"]):
+            return True
+    return False
 
 
 def _cached_google_text_search(api_key: str, query: str, limit: int) -> list[dict]:
