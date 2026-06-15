@@ -92,8 +92,14 @@ def update_user_profile(
     manual_avoid: list[str] | None = None,
     feedback: str | None = None,
     uploaded_sources: list[str] | None = None,
+    replace_existing_interests: bool = False,
 ) -> UserProfile:
-    interests = _merge_unique(existing.interests, extracted.interests, manual_interests)
+    if replace_existing_interests:
+        interests = _merge_unique(extracted.interests)
+    elif _as_list(manual_interests):
+        interests = _merge_unique(extracted.interests, manual_interests)
+    else:
+        interests = _merge_unique(existing.interests, extracted.interests)
     avoid = _merge_unique(existing.avoid, extracted.avoid, manual_avoid or [])
     past_destinations = normalize_destinations([*existing.past_destinations, normalize_destination(destination)])
     feedback_history = existing.feedback_history[:]

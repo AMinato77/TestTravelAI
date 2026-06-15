@@ -1,0 +1,517 @@
+[
+  {
+    "name": "Pla\u00e7a de Sant Jaume",
+    "categories": [
+      "highway",
+      "highway.pedestrian",
+      "tourism",
+      "tourism.sights",
+      "tourism.sights.square"
+    ],
+    "address": "Pla\u00e7a de Sant Jaume, Sant Jaume Square, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 11,
+    "lat": 41.38267558922968,
+    "lon": 2.177020422134613,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "519656deae896a014059085c8283fbb04440f00101f9015f781d0100000000920314506c61c3a7612064652053616e74204a61756d65"
+  },
+  {
+    "name": "Llu\u00eds Companys Jover",
+    "categories": [
+      "tourism",
+      "tourism.sights",
+      "tourism.sights.memorial"
+    ],
+    "address": "Llu\u00eds Companys Jover, Sant Jaume Square, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 29,
+    "lat": 41.3827802,
+    "lon": 2.1768415,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51cc9a58e02b6a01405936470cf1feb04440f00103f901b4b5031e030000009203154c6c75c3ad7320436f6d70616e7973204a6f766572"
+  },
+  {
+    "name": "Frankfurt Sant Jaume",
+    "categories": [
+      "catering",
+      "catering.fast_food"
+    ],
+    "address": "Frankfurt Sant Jaume, Sant Jaume Square, 2, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 35,
+    "lat": 41.3822788,
+    "lon": 2.1769435,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "5110eb8d5a616a01405921faff82eeb04440f00103f90122e6bf68010000009203144672616e6b667572742053616e74204a61756d65"
+  },
+  {
+    "name": "Starbucks",
+    "categories": [
+      "catering",
+      "catering.cafe",
+      "catering.cafe.coffee",
+      "catering.cafe.coffee_shop",
+      "gluten_free"
+    ],
+    "address": "Starbucks, Sant Jaume Square, 3, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 39,
+    "lat": 41.3825115,
+    "lon": 2.1766198,
+    "opening_hours": null,
+    "website": "https://www.starbucks.co.uk/store-locator/68485-302839/sbux-plaza-sant-jaume",
+    "place_id": "51c69b46a4b769014059056c0723f6b04440f00103f901aff80c3401000000920309537461726275636b73"
+  },
+  {
+    "name": "Avocados",
+    "categories": [
+      "catering",
+      "catering.restaurant"
+    ],
+    "address": "Avocados, Carrer de Ferran, 46, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 43,
+    "lat": 41.3822753,
+    "lon": 2.1767561,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51b3f2261aff69014059c8c8a365eeb04440f00103f90120e6bf680100000092030841766f6361646f73"
+  },
+  {
+    "name": "Pans & Company",
+    "categories": [
+      "catering",
+      "catering.fast_food",
+      "catering.fast_food.sandwich",
+      "gluten_free",
+      "wheelchair",
+      "wheelchair.limited"
+    ],
+    "address": "Pans & Company, Sant Jaume Square, 6, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 43,
+    "lat": 41.3829281,
+    "lon": 2.1773087,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51c65eded2206b014059161cb9c903b14440f00103f901b0f80c340100000092030e50616e73202620436f6d70616e79"
+  },
+  {
+    "name": "Avocados",
+    "categories": [
+      "catering",
+      "catering.restaurant",
+      "catering.restaurant.tapas"
+    ],
+    "address": "Avocados, Pla\u00e7a de Sant Miquel, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 50,
+    "lat": 41.3821485,
+    "lon": 2.1768934,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51a6063f16476a01405994dbf63deab04440f00103f901d5678a620200000092030841766f6361646f73"
+  },
+  {
+    "name": "Antic Tapas Ferran",
+    "categories": [
+      "catering",
+      "catering.restaurant",
+      "catering.restaurant.tapas"
+    ],
+    "address": "Antic Tapas Ferran, Carrer de Ferran, 59, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 51,
+    "lat": 41.3823086,
+    "lon": 2.1765833,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "5176285481a46901405962fdfa7cefb04440f00103f90145645d2600000000920312416e7469632054617061732046657272616e"
+  },
+  {
+    "name": "La Fabrica",
+    "categories": [
+      "catering",
+      "catering.fast_food"
+    ],
+    "address": "La Fabrica, Carrer del Call, 19, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 52,
+    "lat": 41.3825181,
+    "lon": 2.176454,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51b1fcf9b6606901405964d0645af6b04440f00103f90163c577050100000092030a4c612046616272696361"
+  },
+  {
+    "name": "Conesa",
+    "categories": [
+      "catering",
+      "catering.fast_food",
+      "gluten_free"
+    ],
+    "address": "Conesa, Carrer de la Llibreteria, 1, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 52,
+    "lat": 41.383052,
+    "lon": 2.1771014,
+    "opening_hours": "Mo-Sa 08:30-22:15",
+    "website": "https://www.conesaentrepans.com/",
+    "place_id": "51459b8823b46a0140596d5512d907b14440f00103f9019e8a144c00000000920306436f6e657361"
+  },
+  {
+    "name": "nostrum",
+    "categories": [
+      "catering",
+      "catering.fast_food"
+    ],
+    "address": "nostrum, Carrer del Call, 26, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 56,
+    "lat": 41.3824002,
+    "lon": 2.1764461,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51d10da8925c69014059ef7d607df2b04440f00103f901dbfce7b0000000009203076e6f737472756d"
+  },
+  {
+    "name": "Haiti Bar",
+    "categories": [
+      "catering",
+      "catering.restaurant"
+    ],
+    "address": "Haiti Bar, Carrer de Jaume I, 3, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 58,
+    "lat": 41.3830233,
+    "lon": 2.1774383,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "5173767cc5646b014059918d51e806b14440f00103f901fd59c24501000000920309486169746920426172"
+  },
+  {
+    "name": "Black remedy",
+    "categories": [
+      "catering",
+      "catering.cafe",
+      "catering.cafe.coffee",
+      "catering.cafe.coffee_shop",
+      "internet_access"
+    ],
+    "address": "Black Remedy, Carrer de la Ciutat, 5, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 60,
+    "lat": 41.3824551,
+    "lon": 2.1777699,
+    "opening_hours": "Mo-Fr 09:00-19:00; Sa-Su 10:00-19:00",
+    "website": "http://blackremedy.com",
+    "place_id": "519db415a0126c0140591e58e949f4b04440f00103f901c39f14200100000092030c426c61636b2072656d656479"
+  },
+  {
+    "name": "Homenatge als castellers",
+    "categories": [
+      "tourism",
+      "tourism.sights",
+      "tourism.sights.memorial",
+      "tourism.sights.memorial.monument"
+    ],
+    "address": "Homenatge als castellers, Pla\u00e7a de Sant Miquel, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 61,
+    "lat": 41.3820329,
+    "lon": 2.177009,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "5104c8d0b1836a0140597ebf3d74e6b04440f00103f901bbd9211a00000000920318486f6d656e6174676520616c732063617374656c6c657273"
+  },
+  {
+    "name": null,
+    "categories": [
+      "tourism",
+      "tourism.attraction",
+      "tourism.attraction.artwork",
+      "tourism.attraction.artwork.sculpture"
+    ],
+    "address": "Pla\u00e7a de Sant Miquel, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 61,
+    "lat": 41.3820323,
+    "lon": 2.1770136,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51eb93371b866a0140590142356fe6b04440f00103f901832e206302000000"
+  },
+  {
+    "name": "Restaurante Loto",
+    "categories": [
+      "catering",
+      "catering.restaurant"
+    ],
+    "address": "Restaurante Loto, Carrer del Call, 17, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 65,
+    "lat": 41.3823755,
+    "lon": 2.1763476,
+    "opening_hours": "Mo-Su 13:00-16:00, 20:00-23:00",
+    "website": "https://restauranteloto.com/",
+    "place_id": "5121d335ee286901405955a52daef1b04440f00103f9019c13ed680100000092031052657374617572616e7465204c6f746f"
+  },
+  {
+    "name": "pizzeria da nanni",
+    "categories": [
+      "catering",
+      "catering.cafe"
+    ],
+    "address": "pizzeria da nanni, Carrer de la Llibreteria, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 67,
+    "lat": 41.3831411,
+    "lon": 2.1773673,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51df09078c3f6b01405972207fc40ab14440f00103f9017906ce7e0100000092031170697a7a65726961206461206e616e6e69"
+  },
+  {
+    "name": "Antigua Cereria Luis Codina",
+    "categories": [
+      "tourism",
+      "tourism.sights",
+      "tourism.sights.memorial"
+    ],
+    "address": "Antigua Cereria Luis Codina, Carrer del Bisbe, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 68,
+    "lat": 41.3831271,
+    "lon": 2.1767005,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51aa7ea5f3e1690140590d5b0e4f0ab14440f00103f9010698c5ad0200000092031b416e74696775612043657265726961204c75697320436f64696e61"
+  },
+  {
+    "name": "Pizzer\u00eda Da Nanni",
+    "categories": [
+      "catering",
+      "catering.restaurant",
+      "catering.restaurant.italian",
+      "catering.restaurant.pizza"
+    ],
+    "address": "Pizzer\u00eda Da Nanni, Carrer de la Llibreteria, 10, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 70,
+    "lat": 41.3831626,
+    "lon": 2.1773855,
+    "opening_hours": "Mo-Su 12:00-22:30",
+    "website": null,
+    "place_id": "51e146ca16496b0140597106da780bb14440f00103f901a167817e0100000092031250697a7a6572c3ad61204461204e616e6e69"
+  },
+  {
+    "name": "Mi Burrito y Yo",
+    "categories": [
+      "catering",
+      "catering.restaurant"
+    ],
+    "address": "Mi Burrito y Yo, Carrer del Pas de l'Ensenyan\u00e7a, 2, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 76,
+    "lat": 41.3819563,
+    "lon": 2.1767011,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "517a562d44e2690140592680acf1e3b04440f00103f901daaf76690100000092030f4d69204275727269746f207920596f"
+  },
+  {
+    "name": "El Paraigua",
+    "categories": [
+      "catering",
+      "catering.bar"
+    ],
+    "address": "El Paraigua, Carrer del Pas de l'Ensenyan\u00e7a, 2, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 79,
+    "lat": 41.3819109,
+    "lon": 2.1767686,
+    "opening_hours": null,
+    "website": "https://www.elparaigua.com/",
+    "place_id": "517aaddfa7056a01405933bed474e2b04440f00103f901d4cef9850000000092030b456c205061726169677561"
+  },
+  {
+    "name": "Mes\u00f3n del Caf\u00e9",
+    "categories": [
+      "catering",
+      "catering.bar"
+    ],
+    "address": "Mes\u00f3n del Caf\u00e9, Carrer de la Llibreteria, 16, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 82,
+    "lat": 41.3832429,
+    "lon": 2.1775174,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "5182c41b3e8e6b0140594cf6741a0eb14440f00103f90185f70c34010000009203104d6573c3b36e2064656c20436166c3a9"
+  },
+  {
+    "name": "Salterio",
+    "categories": [
+      "catering",
+      "catering.restaurant",
+      "vegan",
+      "vegetarian",
+      "vegetarian.only"
+    ],
+    "address": "Salterio, Carrer de Salom\u00f3 ben Adret, 4, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 83,
+    "lat": 41.3825107,
+    "lon": 2.1760837,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "5191de26929e680140595e6f511cf6b04440f00103f901aefe7f290100000092030853616c746572696f"
+  },
+  {
+    "name": "Tapas San Miguel",
+    "categories": [
+      "catering",
+      "catering.restaurant"
+    ],
+    "address": "Tapas San Miguel, Carrer del Pas de l'Ensenyan\u00e7a, 2Bis, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 86,
+    "lat": 41.3818117,
+    "lon": 2.1769112,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51725e526b506a014059765dae34dfb04440f00103f90186093c3a0100000092031054617061732053616e204d696775656c"
+  },
+  {
+    "name": "Wok to Walk",
+    "categories": [
+      "catering",
+      "catering.fast_food"
+    ],
+    "address": "Wok to Walk, Carrer de Jaume I, 7, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 88,
+    "lat": 41.3832206,
+    "lon": 2.1776918,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "519423aeade96b014059a613645f0db14440f00103f9017732b2680100000092030b576f6b20746f2057616c6b"
+  },
+  {
+    "name": null,
+    "categories": [
+      "tourism",
+      "tourism.attraction",
+      "tourism.attraction.artwork",
+      "tourism.attraction.artwork.mural"
+    ],
+    "address": "Pla\u00e7a de Sant Miquel, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 89,
+    "lat": 41.3818921,
+    "lon": 2.1776152,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51142e9a84c16b014059e60c20d7e1b04440f00103f9012a72206302000000"
+  },
+  {
+    "name": "Temple d'August",
+    "categories": [
+      "no_fee",
+      "no_fee.no",
+      "tourism",
+      "tourism.attraction",
+      "tourism.sights",
+      "wheelchair",
+      "wheelchair.limited"
+    ],
+    "address": "Temple d'August, Carrer del Parad\u00eds, 10, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 89,
+    "lat": 41.3833749,
+    "lon": 2.1772306,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51bdcd76e0f76a014059bbcdc06d12b14440f00103f90101fe66920000000092030f54656d706c65206427417567757374"
+  },
+  {
+    "name": null,
+    "categories": [
+      "tourism",
+      "tourism.attraction",
+      "tourism.attraction.artwork"
+    ],
+    "address": "Pla\u00e7a de Sant Miquel, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 91,
+    "lat": 41.3818353,
+    "lon": 2.177534,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51ad6c1ff2966b014059abfaa6fadfb04440f00103f9011f891f6302000000"
+  },
+  {
+    "name": "Orio",
+    "categories": [
+      "catering",
+      "catering.restaurant"
+    ],
+    "address": "Orio, Carrer de Ferran, 38, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 92,
+    "lat": 41.3819545,
+    "lon": 2.1763606,
+    "opening_hours": null,
+    "website": "https://oriogastronomiavasca.com/",
+    "place_id": "516b6c0abf2f69014059af0793e2e3b04440f00103f9013f43482c010000009203044f72696f"
+  },
+  {
+    "name": "Anduri\u00f1a",
+    "categories": [
+      "catering",
+      "catering.bar"
+    ],
+    "address": "Anduri\u00f1a, Carrer de la Fruita, 3, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 92,
+    "lat": 41.3827431,
+    "lon": 2.1759968,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51f09aa102716801405984a2d4b9fdb04440f00103f90143680e9c01000000920309416e64757269c3b161"
+  }
+]

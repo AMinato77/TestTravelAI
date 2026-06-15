@@ -1,0 +1,219 @@
+[
+  {
+    "name": "Pla\u00e7a de Sant Jaume",
+    "categories": [
+      "highway",
+      "highway.pedestrian",
+      "tourism",
+      "tourism.sights",
+      "tourism.sights.square"
+    ],
+    "address": "Pla\u00e7a de Sant Jaume, Sant Jaume Square, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 11,
+    "lat": 41.38267558922968,
+    "lon": 2.177020422134613,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "519656deae896a014059085c8283fbb04440f00101f9015f781d0100000000920314506c61c3a7612064652053616e74204a61756d65"
+  },
+  {
+    "name": "Llu\u00eds Companys Jover",
+    "categories": [
+      "tourism",
+      "tourism.sights",
+      "tourism.sights.memorial"
+    ],
+    "address": "Llu\u00eds Companys Jover, Sant Jaume Square, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 29,
+    "lat": 41.3827802,
+    "lon": 2.1768415,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51cc9a58e02b6a01405936470cf1feb04440f00103f901b4b5031e030000009203154c6c75c3ad7320436f6d70616e7973204a6f766572"
+  },
+  {
+    "name": "Homenatge als castellers",
+    "categories": [
+      "tourism",
+      "tourism.sights",
+      "tourism.sights.memorial",
+      "tourism.sights.memorial.monument"
+    ],
+    "address": "Homenatge als castellers, Pla\u00e7a de Sant Miquel, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 61,
+    "lat": 41.3820329,
+    "lon": 2.177009,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "5104c8d0b1836a0140597ebf3d74e6b04440f00103f901bbd9211a00000000920318486f6d656e6174676520616c732063617374656c6c657273"
+  },
+  {
+    "name": null,
+    "categories": [
+      "tourism",
+      "tourism.attraction",
+      "tourism.attraction.artwork",
+      "tourism.attraction.artwork.sculpture"
+    ],
+    "address": "Pla\u00e7a de Sant Miquel, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 61,
+    "lat": 41.3820323,
+    "lon": 2.1770136,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51eb93371b866a0140590142356fe6b04440f00103f901832e206302000000"
+  },
+  {
+    "name": "Antigua Cereria Luis Codina",
+    "categories": [
+      "tourism",
+      "tourism.sights",
+      "tourism.sights.memorial"
+    ],
+    "address": "Antigua Cereria Luis Codina, Carrer del Bisbe, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 68,
+    "lat": 41.3831271,
+    "lon": 2.1767005,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51aa7ea5f3e1690140590d5b0e4f0ab14440f00103f9010698c5ad0200000092031b416e74696775612043657265726961204c75697320436f64696e61"
+  },
+  {
+    "name": null,
+    "categories": [
+      "tourism",
+      "tourism.attraction",
+      "tourism.attraction.artwork",
+      "tourism.attraction.artwork.mural"
+    ],
+    "address": "Pla\u00e7a de Sant Miquel, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 89,
+    "lat": 41.3818921,
+    "lon": 2.1776152,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51142e9a84c16b014059e60c20d7e1b04440f00103f9012a72206302000000"
+  },
+  {
+    "name": "Temple d'August",
+    "categories": [
+      "no_fee",
+      "no_fee.no",
+      "tourism",
+      "tourism.attraction",
+      "tourism.sights",
+      "wheelchair",
+      "wheelchair.limited"
+    ],
+    "address": "Temple d'August, Carrer del Parad\u00eds, 10, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 89,
+    "lat": 41.3833749,
+    "lon": 2.1772306,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51bdcd76e0f76a014059bbcdc06d12b14440f00103f90101fe66920000000092030f54656d706c65206427417567757374"
+  },
+  {
+    "name": null,
+    "categories": [
+      "tourism",
+      "tourism.attraction",
+      "tourism.attraction.artwork"
+    ],
+    "address": "Pla\u00e7a de Sant Miquel, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 91,
+    "lat": 41.3818353,
+    "lon": 2.177534,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51ad6c1ff2966b014059abfaa6fadfb04440f00103f9011f891f6302000000"
+  },
+  {
+    "name": "Torre de l'esglesia",
+    "categories": [
+      "tourism",
+      "tourism.attraction",
+      "tourism.attraction.viewpoint"
+    ],
+    "address": "Torre de l'esglesia, Carrer de Rere Sant Just, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 98,
+    "lat": 41.3828678,
+    "lon": 2.1781857,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "513febd09fec6c01405982d8e3cf01b14440f00103f901f978913101000000920313546f727265206465206c276573676c65736961"
+  },
+  {
+    "name": null,
+    "categories": [
+      "tourism",
+      "tourism.attraction",
+      "tourism.attraction.artwork"
+    ],
+    "address": "Baixada de Sant Miquel, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 106,
+    "lat": 41.3816238,
+    "lon": 2.1770565,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51925a28999c6a0140590830760cd9b04440f00103f901b0c16b6602000000"
+  },
+  {
+    "name": "Mirador Maria Aur\u00e8lia Capmany",
+    "categories": [
+      "access_limited",
+      "access_limited.private",
+      "tourism",
+      "tourism.attraction",
+      "tourism.attraction.viewpoint"
+    ],
+    "address": "Mirador Maria Aur\u00e8lia Capmany, Pla\u00e7a de Sant Miquel, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 112,
+    "lat": 41.3816809,
+    "lon": 2.1776791,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "5133761d05e36b014059018173ebdab04440f00103f9016ce5c7850200000092031e4d697261646f72204d6172696120417572c3a86c6961204361706d616e79"
+  },
+  {
+    "name": "Palau Centelles",
+    "categories": [
+      "building",
+      "building.historic",
+      "tourism",
+      "tourism.sights",
+      "tourism.sights.castle"
+    ],
+    "address": "Palau Centelles, Baixada de Sant Miquel, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 113,
+    "lat": 41.381566666886584,
+    "lon": 2.1770647494915782,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51e1b962eca06a014059c4c2312dd7b04440f00101f901efa788000000000092030f50616c61752043656e74656c6c6573"
+  }
+]

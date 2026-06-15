@@ -12,6 +12,8 @@ from openai import OpenAI
 ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT / ".env", override=True)
 
+_OPENAI_USAGE_RECORDS: list[dict] = []
+
 
 class MissingOpenAIKeyError(RuntimeError):
     pass
@@ -40,6 +42,14 @@ def get_openai_client() -> OpenAI:
 
 def openai_model(env_name: str, default: str = "gpt-5-nano") -> str:
     return os.getenv(env_name, default)
+
+
+def reset_openai_usage_records() -> None:
+    _OPENAI_USAGE_RECORDS.clear()
+
+
+def openai_usage_records() -> list[dict]:
+    return list(_OPENAI_USAGE_RECORDS)
 
 
 def generate_json(system_prompt: str, payload: dict, model_env: str) -> dict:
@@ -77,6 +87,7 @@ def _generate_openai_json(system_prompt: str, payload: dict, model_env: str) -> 
 
     if hasattr(client, "responses"):
         response = client.responses.create(model=model, input=messages)
+        _record_openai_usage(model_env, model, response)
         return _loads_json_object(response.output_text)
 
     response = client.chat.completions.create(
@@ -84,6 +95,7 @@ def _generate_openai_json(system_prompt: str, payload: dict, model_env: str) -> 
         messages=messages,
         response_format={"type": "json_object"},
     )
+    _record_openai_usage(model_env, model, response)
     return _loads_json_object(response.choices[0].message.content or "{}")
 
 
@@ -116,10 +128,73 @@ def _loads_json_object(text: str) -> dict:
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if not match:
+        object_text = _extract_first_json_object(text)
+        if not object_text:
             raise
-        data = json.loads(match.group(0))
+        try:
+            data = json.loads(object_text)
+        except json.JSONDecodeError:
+            data = json.loads(object_text, strict=False)
     if not isinstance(data, dict):
         raise ValueError("Expected a JSON object from the AI provider.")
     return data
+
+
+def _extract_first_json_object(text: str) -> str | None:
+    start = text.find("{")
+    if start < 0:
+        return None
+
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return None
+
+
+def _record_openai_usage(name: str, model: str, response) -> None:
+    usage = getattr(response, "usage", None)
+    input_tokens = _usage_value(usage, "input_tokens", "prompt_tokens")
+    output_tokens = _usage_value(usage, "output_tokens", "completion_tokens")
+    _OPENAI_USAGE_RECORDS.append(
+        {
+            "name": name.lower(),
+            "model": model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+        }
+    )
+
+
+def _usage_value(usage, *names: str) -> int:
+    if usage is None:
+        return 0
+    for name in names:
+        if isinstance(usage, dict):
+            value = usage.get(name)
+        else:
+            value = getattr(usage, name, None)
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return 0
+    return 0

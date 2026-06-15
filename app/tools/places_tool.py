@@ -99,6 +99,16 @@ def search_places(
     limit: int = 20,
     avoid: list[str] | None = None,
 ) -> list[Activity]:
+    activities, _metadata = search_places_with_metadata(destination, interests, limit=limit, avoid=avoid)
+    return activities
+
+
+def search_places_with_metadata(
+    destination: str,
+    interests: list[str],
+    limit: int = 20,
+    avoid: list[str] | None = None,
+) -> tuple[list[Activity], dict]:
     """
     Search real activities with Google Places.
 
@@ -115,19 +125,26 @@ def search_places(
     activities: list[Activity] = []
     queries = _queries_for_interests(destination, interests, avoid=avoid)
     per_query_limit = max(5, min(20, math.ceil(limit / max(1, len(queries))) + 4))
+    cache_hits = 0
 
     for interest, query in queries:
+        if _cache_path(query, per_query_limit).exists():
+            cache_hits += 1
         places = _cached_google_text_search(api_key, query, per_query_limit)
         for place in places:
             activity = _place_to_activity(place, interest)
-            if activity:
+            if activity and _activity_matches_destination(activity, destination):
                 activities.append(activity)
 
     activities = _deduplicate(activities)
     activities = _filter_low_quality(activities)
     activities = _sort_by_quality(activities)
     activities = _diversify(activities, limit)
-    return activities[:limit]
+    return activities[:limit], {
+        "query_count": len(queries),
+        "cache_hits": cache_hits,
+        "queries": [{"interest": interest, "query": query} for interest, query in queries],
+    }
 
 
 def search_indoor_places(destination: str, limit: int = 8) -> list[Activity]:
@@ -145,11 +162,12 @@ def _queries_for_interests(
     avoid: list[str] | None = None,
 ) -> list[tuple[str, str]]:
     destination = normalize_destination(destination)
+    priority_queries = _priority_template_queries(destination, interests, avoid or [])
     ai_queries = _ai_queries_for_interests(destination, interests, avoid or [])
     if ai_queries:
-        return ai_queries
+        return _merge_queries(priority_queries, ai_queries, max_count=8)
 
-    return _template_queries_for_interests(destination, interests)
+    return _merge_queries(priority_queries, _template_queries_for_interests(destination, interests), max_count=8)
 
 
 def _ai_queries_for_interests(
@@ -164,11 +182,13 @@ def _ai_queries_for_interests(
             system_prompt=(
                 "You are a Google Places query planning agent for a travel app. "
                 "Create precise text search queries for real activities in the destination. "
-                "Use only the provided destination and user interests. "
+                "Use only the provided destination and user interests. Interests are broad categories "
+                "such as anime, sport, food, gaming, shopping, local spots, or nature. "
                 "Respect avoid preferences by not creating queries for avoided topics. "
                 "Return strict JSON with key queries. queries is a list of objects with "
                 "keys interest and query. Keep 1-3 queries per important interest, max 8 total. "
-                "Queries must be useful for Google Places Text Search and include the destination."
+                "Create category-level Google Places text-search queries. Queries must be useful for Google Places "
+                "Text Search and include the destination."
             ),
             payload={
                 "destination": destination,
@@ -225,9 +245,57 @@ def _template_queries_for_interests(destination: str, interests: list[str]) -> l
     return queries
 
 
+def _priority_template_queries(destination: str, interests: list[str], avoid: list[str]) -> list[tuple[str, str]]:
+    queries: list[tuple[str, str]] = []
+    normalized = {interest.strip().lower() for interest in interests}
+    templates: dict[str, list[str]] = {
+        "anime": [
+            "anime shops in {destination}",
+            "manga stores in {destination}",
+        ],
+        "gaming": [
+            "gaming arcades in {destination}",
+            "video game stores in {destination}",
+        ],
+        "sport": [
+            "stadiums in {destination}",
+        ],
+        "shopping": [
+            "shopping districts in {destination}",
+        ],
+    }
+    for interest, interest_templates in templates.items():
+        if interest not in normalized:
+            continue
+        for template in interest_templates:
+            query = template.format(destination=destination)
+            if not _query_conflicts_with_avoid(query, avoid):
+                queries.append((interest, query))
+    return queries
+
+
+def _merge_queries(*groups: list[tuple[str, str]], max_count: int) -> list[tuple[str, str]]:
+    result: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for group in groups:
+        for interest, query in group:
+            key = query.strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            result.append((interest, query))
+            if len(result) >= max_count:
+                return result
+    return result
+
+
 def _query_conflicts_with_avoid(query: str, avoid: list[str]) -> bool:
     text = query.lower()
     avoid_text = " ".join(avoid).lower()
+    for term in avoid:
+        normalized = str(term).strip().lower()
+        if normalized and normalized in text:
+            return True
     if any(term in avoid_text for term in ["culture", "museum", "museums"]):
         if any(term in text for term in ["museum", "museums", "cultural", "culture", "gallery", "historic"]):
             return True
@@ -298,7 +366,7 @@ def _place_to_activity(place: dict, requested_interest: str) -> Activity | None:
     return Activity(
         name=name,
         category=category,
-        description=_build_description(place, category),
+        description=_build_description(place, category, requested_interest),
         cost=_estimate_cost(category),
         duration_hours=_estimate_duration(category),
         indoor=_estimate_indoor(category, types),
@@ -317,7 +385,7 @@ def _place_types(place: dict) -> list[str]:
     return types
 
 
-def _build_description(place: dict, category: str) -> str:
+def _build_description(place: dict, category: str, requested_interest: str) -> str:
     address = place.get("formattedAddress", "")
     rating = place.get("rating")
     review_count = place.get("userRatingCount")
@@ -327,6 +395,7 @@ def _build_description(place: dict, category: str) -> str:
 
     parts = [
         f"Category: {category}",
+        f"Matched query interest: {requested_interest}" if requested_interest else "",
         f"Address: {address}" if address else "",
         f"Rating: {rating}/5" if rating else "",
         f"Reviews: {review_count}" if review_count else "",
@@ -341,6 +410,9 @@ def _normalize_category(types: list[str], requested_interest: str, name: str) ->
     joined = " ".join(types).lower()
     requested_interest = requested_interest.strip().lower()
     name_lower = name.lower()
+
+    if _is_sport_interest(requested_interest, name_lower, joined):
+        return "sport"
 
     if requested_interest in {"anime", "gaming", "technology", "photography", "architecture", "local spots"}:
         if _types_are_reasonable_for_interest(joined, requested_interest, name_lower):
@@ -388,6 +460,29 @@ def _normalize_category(types: list[str], requested_interest: str, name: str) ->
     if any(value in joined for value in ["movie_theater", "amusement_center", "video_game", "casino"]):
         return "gaming"
     return "place"
+
+
+def _is_sport_interest(requested_interest: str, name: str, joined_types: str) -> bool:
+    interest = requested_interest.lower()
+    sport_markers = [
+        "sport",
+        "real madrid",
+        "bernab",
+        "football",
+        "fussball",
+        "fußball",
+        "stadium",
+        "stadion",
+        "bullfighting",
+        "stierkampf",
+        "toros",
+        "las ventas",
+    ]
+    if any(marker in interest for marker in sport_markers):
+        return True
+    if any(marker in name for marker in ["bernab", "real madrid", "las ventas", "bullfighting"]):
+        return True
+    return any(value in joined_types for value in ["stadium", "sports", "sports_complex", "sports_activity_location"])
 
 
 def _types_are_reasonable_for_interest(joined_types: str, requested_interest: str, name: str) -> bool:
@@ -469,6 +564,108 @@ def _filter_low_quality(activities: list[Activity]) -> list[Activity]:
     return result
 
 
+def _activity_matches_destination(activity: Activity, destination: str) -> bool:
+    destination_lower = normalize_destination(destination).lower()
+    description = activity.description.lower()
+    if _has_foreign_address(description, destination_lower):
+        return False
+    if destination_lower and destination_lower in description:
+        return True
+
+    country_fallbacks = {
+        "tokyo": ["japan"],
+        "osaka": ["japan"],
+        "kyoto": ["japan"],
+        "barcelona": ["spain"],
+        "madrid": ["spain"],
+        "paris": ["france"],
+        "rome": ["italy"],
+        "milan": ["italy"],
+        "vienna": ["austria"],
+        "brussels": ["belgium"],
+    }
+    allowed_countries = country_fallbacks.get(destination_lower, [])
+    if allowed_countries and any(country in description for country in allowed_countries):
+        foreign_city_markers = [
+            "bogot",
+            "paris",
+            "costa rica",
+            "oyama",
+            "madrid",
+            "barcelona",
+            "tokyo",
+            "osaka",
+            "kyoto",
+        ]
+        return not any(marker in description for marker in foreign_city_markers if marker != destination_lower)
+
+    return not any(marker in description for marker in _foreign_markers(destination_lower))
+
+
+def _has_foreign_address(description: str, destination_lower: str) -> bool:
+    address_match = re.search(r"address:\s*([^|]+)", description)
+    if not address_match:
+        return False
+    address = address_match.group(1).strip().lower()
+    if not address:
+        return False
+    if destination_lower and destination_lower in address:
+        return False
+    allowed_country = {
+        "tokyo": "japan",
+        "osaka": "japan",
+        "kyoto": "japan",
+        "madrid": "spain",
+        "barcelona": "spain",
+        "paris": "france",
+        "rome": "italy",
+        "milan": "italy",
+        "vienna": "austria",
+    }.get(destination_lower)
+    if allowed_country and allowed_country in address and not any(marker in address for marker in _foreign_markers(destination_lower)):
+        return False
+    return any(marker in address for marker in _foreign_markers(destination_lower))
+
+
+def _foreign_markers(destination_lower: str) -> list[str]:
+    markers = [
+        "usa",
+        "united states",
+        "los angeles",
+        "california",
+        "yokohama",
+        "kawasaki",
+        "saitama",
+        "chiba",
+        "colombia",
+        "bogot",
+        "costa rica",
+        "france",
+        "spain",
+        "italy",
+        "japan",
+        "tokyo",
+        "osaka",
+        "kyoto",
+        "madrid",
+        "barcelona",
+        "paris",
+        "rome",
+        "milan",
+    ]
+    destination_aliases = {
+        "tokyo": {"tokyo", "japan"},
+        "osaka": {"osaka", "japan"},
+        "kyoto": {"kyoto", "japan"},
+        "madrid": {"madrid", "spain"},
+        "barcelona": {"barcelona", "spain"},
+        "paris": {"paris", "france"},
+        "rome": {"rome", "italy"},
+        "milan": {"milan", "italy"},
+    }.get(destination_lower, {destination_lower})
+    return [marker for marker in markers if marker not in destination_aliases]
+
+
 def _sort_by_quality(activities: list[Activity]) -> list[Activity]:
     return sorted(activities, key=_score_activity, reverse=True)
 
@@ -485,6 +682,8 @@ def _score_activity(activity: Activity) -> float:
         score += min(math.log10(reviews + 1) * 8, 40)
     if activity.category in {"culture", "history", "food", "street_food", "nature", "architecture", "photography"}:
         score += 5
+    if activity.category in {"anime", "gaming", "technology", "sport", "shopping", "local spots"}:
+        score += 8
     if "google maps:" in text:
         score += 3
     if "website:" in text:

@@ -1,0 +1,207 @@
+[
+  {
+    "name": "Frankfurt Sant Jaume",
+    "categories": [
+      "catering",
+      "catering.fast_food"
+    ],
+    "address": "Frankfurt Sant Jaume, Sant Jaume Square, 2, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 35,
+    "lat": 41.3822788,
+    "lon": 2.1769435,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "5110eb8d5a616a01405921faff82eeb04440f00103f90122e6bf68010000009203144672616e6b667572742053616e74204a61756d65"
+  },
+  {
+    "name": "Starbucks",
+    "categories": [
+      "catering",
+      "catering.cafe",
+      "catering.cafe.coffee",
+      "catering.cafe.coffee_shop",
+      "gluten_free"
+    ],
+    "address": "Starbucks, Sant Jaume Square, 3, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 39,
+    "lat": 41.3825115,
+    "lon": 2.1766198,
+    "opening_hours": null,
+    "website": "https://www.starbucks.co.uk/store-locator/68485-302839/sbux-plaza-sant-jaume",
+    "place_id": "51c69b46a4b769014059056c0723f6b04440f00103f901aff80c3401000000920309537461726275636b73"
+  },
+  {
+    "name": "Avocados",
+    "categories": [
+      "catering",
+      "catering.restaurant"
+    ],
+    "address": "Avocados, Carrer de Ferran, 46, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 43,
+    "lat": 41.3822753,
+    "lon": 2.1767561,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51b3f2261aff69014059c8c8a365eeb04440f00103f90120e6bf680100000092030841766f6361646f73"
+  },
+  {
+    "name": "Pans & Company",
+    "categories": [
+      "catering",
+      "catering.fast_food",
+      "catering.fast_food.sandwich",
+      "gluten_free",
+      "wheelchair",
+      "wheelchair.limited"
+    ],
+    "address": "Pans & Company, Sant Jaume Square, 6, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 43,
+    "lat": 41.3829281,
+    "lon": 2.1773087,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51c65eded2206b014059161cb9c903b14440f00103f901b0f80c340100000092030e50616e73202620436f6d70616e79"
+  },
+  {
+    "name": "Avocados",
+    "categories": [
+      "catering",
+      "catering.restaurant",
+      "catering.restaurant.tapas"
+    ],
+    "address": "Avocados, Pla\u00e7a de Sant Miquel, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 50,
+    "lat": 41.3821485,
+    "lon": 2.1768934,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51a6063f16476a01405994dbf63deab04440f00103f901d5678a620200000092030841766f6361646f73"
+  },
+  {
+    "name": "Antic Tapas Ferran",
+    "categories": [
+      "catering",
+      "catering.restaurant",
+      "catering.restaurant.tapas"
+    ],
+    "address": "Antic Tapas Ferran, Carrer de Ferran, 59, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 51,
+    "lat": 41.3823086,
+    "lon": 2.1765833,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "5176285481a46901405962fdfa7cefb04440f00103f90145645d2600000000920312416e7469632054617061732046657272616e"
+  },
+  {
+    "name": "La Fabrica",
+    "categories": [
+      "catering",
+      "catering.fast_food"
+    ],
+    "address": "La Fabrica, Carrer del Call, 19, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 52,
+    "lat": 41.3825181,
+    "lon": 2.176454,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51b1fcf9b6606901405964d0645af6b04440f00103f90163c577050100000092030a4c612046616272696361"
+  },
+  {
+    "name": "Conesa",
+    "categories": [
+      "catering",
+      "catering.fast_food",
+      "gluten_free"
+    ],
+    "address": "Conesa, Carrer de la Llibreteria, 1, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 52,
+    "lat": 41.383052,
+    "lon": 2.1771014,
+    "opening_hours": "Mo-Sa 08:30-22:15",
+    "website": "https://www.conesaentrepans.com/",
+    "place_id": "51459b8823b46a0140596d5512d907b14440f00103f9019e8a144c00000000920306436f6e657361"
+  },
+  {
+    "name": "nostrum",
+    "categories": [
+      "catering",
+      "catering.fast_food"
+    ],
+    "address": "nostrum, Carrer del Call, 26, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 56,
+    "lat": 41.3824002,
+    "lon": 2.1764461,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "51d10da8925c69014059ef7d607df2b04440f00103f901dbfce7b0000000009203076e6f737472756d"
+  },
+  {
+    "name": "Haiti Bar",
+    "categories": [
+      "catering",
+      "catering.restaurant"
+    ],
+    "address": "Haiti Bar, Carrer de Jaume I, 3, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 58,
+    "lat": 41.3830233,
+    "lon": 2.1774383,
+    "opening_hours": null,
+    "website": null,
+    "place_id": "5173767cc5646b014059918d51e806b14440f00103f901fd59c24501000000920309486169746920426172"
+  },
+  {
+    "name": "Black remedy",
+    "categories": [
+      "catering",
+      "catering.cafe",
+      "catering.cafe.coffee",
+      "catering.cafe.coffee_shop",
+      "internet_access"
+    ],
+    "address": "Black Remedy, Carrer de la Ciutat, 5, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 60,
+    "lat": 41.3824551,
+    "lon": 2.1777699,
+    "opening_hours": "Mo-Fr 09:00-19:00; Sa-Su 10:00-19:00",
+    "website": "http://blackremedy.com",
+    "place_id": "519db415a0126c0140591e58e949f4b04440f00103f901c39f14200100000092030c426c61636b2072656d656479"
+  },
+  {
+    "name": "Restaurante Loto",
+    "categories": [
+      "catering",
+      "catering.restaurant"
+    ],
+    "address": "Restaurante Loto, Carrer del Call, 17, 08002 Barcelona, Spain",
+    "city": "Barcelona",
+    "country": "Spain",
+    "distance_m": 65,
+    "lat": 41.3823755,
+    "lon": 2.1763476,
+    "opening_hours": "Mo-Su 13:00-16:00, 20:00-23:00",
+    "website": "https://restauranteloto.com/",
+    "place_id": "5121d335ee286901405955a52daef1b04440f00103f9019c13ed680100000092031052657374617572616e7465204c6f746f"
+  }
+]

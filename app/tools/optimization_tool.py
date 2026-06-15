@@ -13,6 +13,7 @@ def optimize_itinerary(
     budget: float,
     weather: dict,
     profile: UserProfile | None = None,
+    constraints: dict | None = None,
 ) -> Itinerary:
-    validation = validate_itinerary_rules(itinerary, budget, weather, profile)
-    return optimize_itinerary_rules(itinerary, validation, alternatives, budget, weather, profile)
+    validation = validate_itinerary_rules(itinerary, budget, weather, profile, constraints=constraints)
+    return optimize_itinerary_rules(itinerary, validation, alternatives, budget, weather, profile, constraints=constraints)

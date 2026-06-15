@@ -6,6 +6,8 @@ __pycache__/
 .streamlit/
 data/chromadb/
 data/api_cache/
+data/gmail_credentials.json
+data/gmail_tokens/
 data/user_profiles/*.json
 data/user_documents/
 data/travel_data/*.json
