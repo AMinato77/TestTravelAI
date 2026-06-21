@@ -57,7 +57,8 @@ def plan_itinerary(
             "Do not create a bare-minimum "
             "plan when the budget is generous. Aim to use the target budget range with "
             "higher-quality matching activities, paid experiences, and explicit notes "
-            "about why the spend level is appropriate."
+            "about why the spend level is appropriate. "
+            "Write all user-facing notes in concise German."
         ),
         payload={
             "destination": destination,

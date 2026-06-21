@@ -87,7 +87,7 @@ def _show_validation(label: str, validation) -> None:
 
 
 def _show_items(items: list[str], empty_text: str = "Keine Daten erkannt.") -> None:
-    cleaned = [item for item in items if item]
+    cleaned = [item for item in items if item and str(item).strip().lower() not in {"none", "unknown", "null", "n/a", "-"}]
     if not cleaned:
         st.caption(empty_text)
         return
@@ -422,15 +422,89 @@ def _show_itinerary(itinerary, title: str) -> None:
             for activity in day.activities:
                 st.markdown(
                     f"**{activity.name}**  \n"
-                    f"{activity.category} | {activity.duration_hours:g}h | "
+                    f"{_category_label(activity.category)} | {activity.duration_hours:g}h | "
                     f"{activity.cost:g} {itinerary.currency} | "
                     f"{'Indoor' if activity.indoor else 'Outdoor'}"
                 )
-                if activity.description:
-                    st.caption(activity.description)
+                meta = _activity_meta(activity.description)
+                if meta:
+                    st.caption(" | ".join(meta))
+                links = _activity_links(activity.description)
+                if links:
+                    with st.expander("Details und Links", expanded=False):
+                        for label, url in links:
+                            st.markdown(f"- [{label}]({url})")
             if day.notes:
-                st.info(" ".join(day.notes))
+                st.info(_clean_note_text(" ".join(day.notes)))
             st.write(f"Tagessumme: {day.total_cost:g} {itinerary.currency}")
+
+
+def _category_label(category: str) -> str:
+    labels = {
+        "food": "Essen",
+        "street_food": "Street Food",
+        "nature": "Natur",
+        "culture": "Kultur",
+        "history": "Geschichte",
+        "architecture": "Architektur",
+        "photography": "Fotografie",
+        "shopping": "Shopping",
+        "sport": "Sport",
+        "gaming": "Gaming",
+        "anime": "Anime",
+        "technology": "Technik",
+        "nightlife": "Nightlife",
+        "local spots": "Lokale Orte",
+    }
+    return labels.get(str(category).strip().lower(), str(category).replace("_", " ").title())
+
+
+def _activity_meta(description: str) -> list[str]:
+    if not description:
+        return []
+    fields = []
+    address = _description_field(description, "Address")
+    rating = _description_field(description, "Rating")
+    reviews = _description_field(description, "Reviews")
+    if address:
+        fields.append(f"Adresse: {address}")
+    if rating:
+        fields.append(f"Bewertung: {rating}")
+    if reviews:
+        fields.append(f"Reviews: {reviews}")
+    return fields
+
+
+def _activity_links(description: str) -> list[tuple[str, str]]:
+    links: list[tuple[str, str]] = []
+    website = _description_field(description, "Website")
+    maps_url = _description_field(description, "Google Maps")
+    if website:
+        links.append(("Website", website))
+    if maps_url:
+        links.append(("Google Maps", maps_url))
+    return links
+
+
+def _description_field(description: str, label: str) -> str:
+    marker = f"{label}:"
+    for part in str(description).split("|"):
+        cleaned = part.strip()
+        if cleaned.lower().startswith(marker.lower()):
+            return cleaned.split(":", 1)[1].strip()
+    return ""
+
+
+def _clean_note_text(text: str) -> str:
+    replacements = {
+        "Rain-aware planning": "Regenbewusste Planung",
+        "Indoor activities were prioritized.": "Indoor-Aktivitaeten wurden priorisiert.",
+        "Relaxed pacing: limited number of main activities.": "Entspanntes Tempo: begrenzte Anzahl grosser Aktivitaeten.",
+    }
+    result = str(text)
+    for source, target in replacements.items():
+        result = result.replace(source, target)
+    return result
 
 
 st.set_page_config(page_title="Adaptive AI Travel Agent", page_icon="AI", layout="wide")

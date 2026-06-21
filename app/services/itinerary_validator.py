@@ -5,6 +5,7 @@ import re
 from app.models.itinerary import Itinerary, ValidationIssue, ValidationResult
 from app.models.user_profile import UserProfile
 from app.services.budget_strategy import budget_utilization, target_budget_range
+from app.services.destination_normalizer import destination_matches_text, normalize_destination
 
 
 def validate_itinerary_rules(
@@ -137,7 +138,7 @@ def validate_itinerary_rules(
                 )
             )
 
-    expected_destination = itinerary.destination.strip().lower()
+    expected_destination = normalize_destination(itinerary.destination)
     if expected_destination:
         for day in itinerary.days:
             for activity in day.activities:
@@ -243,5 +244,5 @@ def _activity_has_foreign_location(activity, expected_destination: str) -> bool:
     address_match = re.search(r"address:\s*([^|]+)", description)
     if address_match:
         address = address_match.group(1).strip()
-        return bool(address and expected_destination not in address)
+        return bool(address and not destination_matches_text(expected_destination, address))
     return False

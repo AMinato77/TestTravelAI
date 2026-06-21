@@ -8,6 +8,7 @@ from app.tools.openai_runtime import demo_fallback_enabled, generate_json
 
 
 KNOWN_STYLES = ["relaxed", "adventure", "luxury", "budget", "balanced"]
+NULL_TERMS = {"none", "null", "unknown", "keine", "kein", "n/a", "-"}
 
 
 def parse_travel_request(text: str, fallback: TravelRequest) -> TravelRequest:
@@ -93,7 +94,7 @@ def parse_travel_request(text: str, fallback: TravelRequest) -> TravelRequest:
             interests=interests,
             must_have=[],
             avoid=avoid,
-            travel_style=_parse_style(text) or data.get("travel_style") or fallback.travel_style,
+            travel_style=_clean_travel_style(text, data.get("travel_style"), fallback.travel_style),
         )
 
     avoid = _parse_avoid(text) or fallback.avoid
@@ -116,7 +117,7 @@ def parse_travel_request(text: str, fallback: TravelRequest) -> TravelRequest:
         ),
         must_have=[],
         avoid=avoid,
-        travel_style=_parse_style(text) or fallback.travel_style,
+        travel_style=_clean_travel_style(text, None, fallback.travel_style),
     )
 
 
@@ -498,18 +499,50 @@ def _merge_unique(*groups: list[str]) -> list[str]:
     for group in groups:
         for value in group:
             cleaned = str(value).strip().lower()
-            if not cleaned or cleaned in seen:
+            if not cleaned or cleaned in NULL_TERMS or cleaned in seen:
                 continue
             seen.add(cleaned)
             result.append(cleaned)
     return result
 
 
+def _clean_travel_style(text: str, model_value, fallback: str) -> str:
+    parsed = _parse_style(text)
+    if parsed:
+        return parsed
+    value = str(model_value or "").strip().lower()
+    if value not in KNOWN_STYLES:
+        return fallback
+    if value == "budget" and not _has_budget_style_intent(text):
+        return fallback
+    return value
+
+
 def _parse_style(text: str) -> str | None:
     lower = text.lower()
     if "nicht stressig" in lower or "keinen stressigen" in lower:
         return "relaxed"
+    if _has_budget_style_intent(text):
+        return "budget"
     for style in KNOWN_STYLES:
-        if style in lower:
+        if style != "budget" and style in lower:
             return style
     return None
+
+
+def _has_budget_style_intent(text: str) -> bool:
+    lower = text.lower()
+    return any(
+        phrase in lower
+        for phrase in [
+            "budget travel",
+            "budget trip",
+            "low budget",
+            "cheap trip",
+            "guenstig",
+            "günstig",
+            "preiswert",
+            "sparsam",
+            "billig reisen",
+        ]
+    )

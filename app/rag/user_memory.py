@@ -18,7 +18,14 @@ NON_INTEREST_TERMS = {
     "low budget",
     "medium budget",
     "high budget",
+    "none",
+    "unknown",
+    "null",
+    "n/a",
+    "-",
 }
+
+NULL_TERMS = {"none", "unknown", "null", "n/a", "-", "keine", "kein"}
 
 
 def load_user_profile(user_id: str) -> UserProfile:
@@ -52,7 +59,7 @@ def save_user_profile(profile: UserProfile) -> None:
     safe_user_id = _safe_user_id(profile.user_id)
     profile.user_id = safe_user_id
     profile.interests = _clean_interests(_as_list(profile.interests))
-    profile.avoid = _merge_unique(_as_list(profile.avoid))
+    profile.avoid = _clean_plain_values(profile.avoid)
     profile.source_notes = _clean_source_notes(profile.source_notes)
     profile.past_destinations = normalize_destinations(_as_list(profile.past_destinations))
     profile.feedback_history = _as_list(profile.feedback_history)[-20:]
@@ -193,6 +200,18 @@ def _clean_interests(values) -> list[str]:
         for value in _as_list(values)
         if value.strip().lower() and value.strip().lower() not in NON_INTEREST_TERMS
     ]
+
+
+def _clean_plain_values(values) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for value in _as_list(values):
+        normalized = " ".join(str(value).strip().lower().split())
+        if not normalized or normalized in NULL_TERMS or normalized in seen:
+            continue
+        seen.add(normalized)
+        cleaned.append(normalized)
+    return cleaned
 
 
 def _clean_source_notes(value) -> list[str]:

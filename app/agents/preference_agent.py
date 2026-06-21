@@ -36,6 +36,7 @@ NON_INTEREST_TERMS = {
     "medium budget",
     "high budget",
 }
+NULL_TERMS = {"none", "unknown", "null", "n/a", "-", "keine", "kein"}
 
 
 def extract_preferences(
@@ -85,10 +86,10 @@ def extract_preferences(
         interests = _clean_interests(data.get("interests", manual_interests))
     return UserProfile(
         interests=interests,
-        budget_preference=data.get("budget_preference", budget_preference),
-        travel_style=data.get("travel_style", travel_style),
-        avoid=_as_list(data.get("avoid")),
-        source_notes=_as_list(data.get("source_notes")) or ["Preferences extracted from user memory and current inputs."],
+        budget_preference=_clean_choice(data.get("budget_preference"), {"low", "medium", "high"}, budget_preference),
+        travel_style=_clean_choice(data.get("travel_style"), {"balanced", "relaxed", "adventure", "luxury", "budget"}, travel_style),
+        avoid=_clean_plain_values(data.get("avoid")),
+        source_notes=_clean_plain_values(data.get("source_notes")) or ["Preferences extracted from user memory and current inputs."],
         uploaded_sources=[],
     )
 
@@ -190,3 +191,20 @@ def _as_list(value) -> list[str]:
     if isinstance(value, str):
         return [value] if value.strip() else []
     return [str(value)]
+
+
+def _clean_plain_values(value) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in _as_list(value):
+        normalized = " ".join(str(item).strip().lower().split())
+        if not normalized or normalized in NULL_TERMS or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
+
+
+def _clean_choice(value, allowed: set[str], fallback: str) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in allowed else fallback

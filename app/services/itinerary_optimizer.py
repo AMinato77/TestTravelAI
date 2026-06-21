@@ -71,7 +71,7 @@ def _replace_rain_conflict(
             reason = f"same category ({activity.category}) and rain chance is {rain_chance}%"
         else:
             reason = f"rain chance is {rain_chance}%"
-        _add_note(day, f"Replaced {activity.name} with {replacement.name} because {reason}.")
+        _add_note(day, f"{activity.name} wurde wegen Regenrisiko durch {replacement.name} ersetzt ({reason}).")
         return
 
 
@@ -83,11 +83,11 @@ def _trim_day(itinerary: Itinerary, day_number: int | None, profile: UserProfile
     max_activities = 2 if profile and profile.travel_style == "relaxed" else 3
     while len(day.activities) > max_activities:
         removed = day.activities.pop()
-        _add_note(day, f"Removed {removed.name} to simplify the day.")
+        _add_note(day, f"{removed.name} wurde entfernt, damit der Tag entspannter bleibt.")
 
     while day.total_duration_hours > 8 and day.activities:
         removed = day.activities.pop()
-        _add_note(day, f"Removed {removed.name} to reduce total duration.")
+        _add_note(day, f"{removed.name} wurde entfernt, um die Tagesdauer zu reduzieren.")
 
 
 def _reduce_budget(itinerary: Itinerary, budget: float, cheap_alternatives: list[Activity]) -> None:
@@ -102,10 +102,10 @@ def _reduce_budget(itinerary: Itinerary, budget: float, cheap_alternatives: list
         if replacement:
             index = day.activities.index(expensive)
             day.activities[index] = replacement
-            _add_note(day, f"Replaced {expensive.name} with {replacement.name} to reduce budget.")
+            _add_note(day, f"{expensive.name} wurde durch {replacement.name} ersetzt, um im Budget zu bleiben.")
             continue
         day.activities.remove(expensive)
-        _add_note(day, f"Removed {expensive.name} to reduce budget.")
+        _add_note(day, f"{expensive.name} wurde entfernt, um im Budget zu bleiben.")
 
 
 def _fill_empty_day(itinerary: Itinerary, day_number: int | None, alternatives: list[Activity]) -> None:
@@ -114,7 +114,7 @@ def _fill_empty_day(itinerary: Itinerary, day_number: int | None, alternatives: 
         return
     for replacement in _unused_activities(alternatives, itinerary, count=2):
         day.activities.append(replacement)
-        _add_note(day, f"Added {replacement.name} because the day was empty.")
+        _add_note(day, f"{replacement.name} wurde ergaenzt, weil dieser Tag noch leer war.")
 
 
 def _replace_preference_conflict(
@@ -140,10 +140,10 @@ def _replace_preference_conflict(
             continue
         if replacement:
             day.activities[index] = replacement
-            _add_note(day, f"Replaced {activity.name} with {replacement.name} because it conflicted with preferences.")
+            _add_note(day, f"{activity.name} wurde wegen Nutzerpraeferenzen durch {replacement.name} ersetzt.")
         else:
             day.activities.pop(index)
-            _add_note(day, f"Removed {activity.name} because it conflicted with preferences.")
+            _add_note(day, f"{activity.name} wurde entfernt, weil es den Nutzerpraeferenzen widerspricht.")
         return
 
 

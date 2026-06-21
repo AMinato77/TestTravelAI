@@ -35,6 +35,7 @@ def add_budget_upgrades(
     profile: UserProfile | None = None,
 ) -> Itinerary:
     """Add explicit experience-budget allocations when a valid plan is too thin."""
+    _remove_existing_budget_upgrade_notes(itinerary)
     gap = under_budget_gap(itinerary, budget, profile)
     if gap <= 0 or not itinerary.days:
         return itinerary
@@ -52,9 +53,19 @@ def add_budget_upgrades(
     for day in days:
         category_hint = _dominant_day_category(day.activities)
         day.notes.append(
-            f"Optional {itinerary.currency} {per_day:g} reserve suggested for stronger {category_hint} experiences; not counted as a booked activity."
+            f"Optional {per_day:g} {itinerary.currency} Reserve fuer hochwertigere {_category_label(category_hint)}; nicht als feste Buchung eingerechnet."
         )
     return itinerary
+
+
+def _remove_existing_budget_upgrade_notes(itinerary: Itinerary) -> None:
+    for day in itinerary.days:
+        day.notes = [
+            note
+            for note in day.notes
+            if "Reserve fuer hochwertigere" not in str(note)
+            and "reserve suggested for stronger" not in str(note)
+        ]
 
 
 def _dominant_day_category(activities: list[Activity]) -> str:
@@ -76,3 +87,17 @@ def _upgrade_name(category: str) -> str:
     if category in {"culture", "history"}:
         return "Premium guided visit or ticket budget"
     return "Curated local experience budget"
+
+
+def _category_label(category: str) -> str:
+    labels = {
+        "food": "Essens-Erlebnisse",
+        "street_food": "Street-Food-Erlebnisse",
+        "nature": "Natur-Erlebnisse",
+        "culture": "Kultur-Erlebnisse",
+        "history": "Geschichts-Erlebnisse",
+        "gaming": "Gaming-Erlebnisse",
+        "sport": "Sport-Erlebnisse",
+        "local spots": "lokale Erlebnisse",
+    }
+    return labels.get(category, f"{category.replace('_', '-')}-Erlebnisse")

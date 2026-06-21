@@ -27,6 +27,15 @@ DESTINATION_ALIASES = {
     "torino": "Turin",
 }
 
+DESTINATION_MATCH_TERMS = {
+    "vienna": ["vienna", "wien"],
+    "rome": ["rome", "roma"],
+    "milan": ["milan", "milano", "mailand"],
+    "munich": ["munich", "muenchen", "munchen", "münchen"],
+    "lisbon": ["lisbon", "lissabon", "lisboa"],
+    "tokyo": ["tokyo", "tokio"],
+}
+
 
 def normalize_destination(destination: str) -> str:
     """Return a canonical destination name for memory and external APIs."""
@@ -48,6 +57,27 @@ def normalize_destinations(destinations: list[str]) -> list[str]:
         seen.add(key)
         values.append(normalized)
     return values
+
+
+def destination_match_terms(destination: str) -> list[str]:
+    """Return local and canonical city names that may appear in provider data."""
+    normalized = normalize_destination(destination)
+    if not normalized:
+        return []
+    terms = DESTINATION_MATCH_TERMS.get(normalized.lower(), [normalized.lower()])
+    result: list[str] = []
+    seen: set[str] = set()
+    for term in [normalized, *terms]:
+        cleaned = _clean_destination(term).lower()
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            result.append(cleaned)
+    return result
+
+
+def destination_matches_text(destination: str, text: str) -> bool:
+    haystack = str(text or "").lower()
+    return any(term in haystack for term in destination_match_terms(destination))
 
 
 def _clean_destination(destination: str) -> str:
