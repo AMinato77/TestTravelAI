@@ -18,7 +18,6 @@ from app.models.travel_request import TravelRequest
 from app.orchestrator import build_travel_plan
 from app.rag.memory_retrieval import delete_user_memory_sources
 from app.rag.user_memory import create_user_profile, list_user_ids, load_user_profile
-from app.services.interest_taxonomy import ALLOWED_INTERESTS
 from app.tools.gmail_tool import (
     GmailIntegrationError,
     build_gmail_preference_source,
@@ -29,7 +28,22 @@ from app.tools.gmail_tool import (
 from app.tools.openai_runtime import MissingLocalAIError, MissingOpenAIKeyError, ai_provider
 
 
-INTEREST_OPTIONS = ALLOWED_INTERESTS
+def _travel_request_fallback(**values) -> TravelRequest:
+    try:
+        return TravelRequest(**values)
+    except TypeError:
+        legacy_keys = {
+            "destination",
+            "destination_scope",
+            "needs_destination_recommendation",
+            "destination_reasoning",
+            "duration_days",
+            "budget",
+            "must_have",
+            "avoid",
+            "travel_style",
+        }
+        return TravelRequest(**{key: value for key, value in values.items() if key in legacy_keys})
 
 
 def _build_preference_sources(uploaded_files, travel_ratings: str, feedback: str) -> list[PreferenceSource]:
@@ -95,16 +109,39 @@ def _show_items(items: list[str], empty_text: str = "Keine Daten erkannt.") -> N
         st.write(f"- {item}")
 
 
+def _profile_value(profile, name: str, default):
+    value = getattr(profile, name, default)
+    return default if value is None else value
+
+
+def _profile_dict(profile) -> dict:
+    if hasattr(profile, "to_dict"):
+        return profile.to_dict()
+    return {
+        "user_id": _profile_value(profile, "user_id", "demo_user_1"),
+        "interest_tags": _profile_value(profile, "interest_tags", []),
+        "preference_notes": _profile_value(profile, "preference_notes", []),
+        "travel_style": _profile_value(profile, "travel_style", "balanced"),
+        "budget_preference": _profile_value(profile, "budget_preference", "medium"),
+        "avoid": _profile_value(profile, "avoid", []),
+        "preferred_day_structure": _profile_value(profile, "preferred_day_structure", "balanced"),
+        "past_destinations": _profile_value(profile, "past_destinations", []),
+        "feedback_history": _profile_value(profile, "feedback_history", []),
+        "source_notes": _profile_value(profile, "source_notes", []),
+        "uploaded_sources": _profile_value(profile, "uploaded_sources", []),
+    }
+
+
 def _show_sidebar_memory(profile, title: str = "Gespeichertes Memory", expanded: bool = False) -> None:
     with st.expander(title, expanded=expanded):
-        st.write(f"Reisestil: {profile.travel_style}")
-        st.write(f"Budgetpraeferenz: {profile.budget_preference}")
-        st.markdown("**Interessen**")
-        _show_items(profile.interests)
+        st.write(f"Reisestil: {_profile_value(profile, 'travel_style', 'balanced')}")
+        st.write(f"Budgetpraeferenz: {_profile_value(profile, 'budget_preference', 'medium')}")
+        st.markdown("**Praeferenznotizen**")
+        _show_items(_profile_value(profile, "preference_notes", []))
         st.markdown("**Bisherige Ziele**")
-        _show_items(profile.past_destinations)
+        _show_items(_profile_value(profile, "past_destinations", []))
         with st.expander("Chroma Memory Snapshot", expanded=False):
-            st.json(profile.to_dict())
+            st.json(_profile_dict(profile))
 
 
 def _select_user_profile() -> str:
@@ -154,11 +191,11 @@ def _show_request_summary(parsed_request: TravelRequest) -> None:
     col_2.metric("Tage", parsed_request.duration_days)
     col_3.metric("Budget", f"{parsed_request.budget:g} EUR")
     col_4.metric("Reisestil", parsed_request.travel_style)
-    st.markdown("**Interessen aus aktuellem Freitext**")
-    if parsed_request.interests:
-        st.write(", ".join(parsed_request.interests))
+    st.markdown("**Konkrete Wuensche aus aktuellem Freitext**")
+    if parsed_request.must_have:
+        st.write(", ".join(parsed_request.must_have))
     else:
-        st.write("Keine Interessen im Freitext erkannt. Gmail/Memory-Interessen werden im Profil darunter verarbeitet.")
+        st.write("Keine konkreten Wuensche erkannt. Query Planning nutzt Ziel, Memory und Fallback-Suche.")
     if parsed_request.needs_destination_recommendation:
         st.info(
             f"Die Anfrage wurde als Ziel-Empfehlung erkannt "
@@ -176,8 +213,10 @@ def _show_request_summary(parsed_request: TravelRequest) -> None:
                 "destination_reasoning": parsed_request.destination_reasoning,
                 "duration_days": parsed_request.duration_days,
                 "budget": parsed_request.budget,
-                "interests": parsed_request.interests,
+                "must_have": parsed_request.must_have,
                 "avoid": parsed_request.avoid,
+                "interest_tags": parsed_request.interest_tags,
+                "query_hints": parsed_request.query_hints,
                 "travel_style": parsed_request.travel_style,
             }
         )
@@ -185,29 +224,21 @@ def _show_request_summary(parsed_request: TravelRequest) -> None:
 
 def _show_profile_summary(profile) -> None:
     st.markdown("### Profil")
-    st.write(f"**User:** {profile.user_id}")
-    st.write(f"**Reisestil:** {profile.travel_style}")
-    st.write(f"**Budgetpraeferenz:** {profile.budget_preference}")
-    st.markdown("**Gelernte Interessen**")
-    _show_items(profile.interests)
+    st.write(f"**User:** {_profile_value(profile, 'user_id', 'demo_user_1')}")
+    st.write(f"**Reisestil:** {_profile_value(profile, 'travel_style', 'balanced')}")
+    st.write(f"**Budgetpraeferenz:** {_profile_value(profile, 'budget_preference', 'medium')}")
+    st.markdown("**Praeferenznotizen**")
+    _show_items(_profile_value(profile, "preference_notes", []))
+    st.markdown("**Tags fuer UI/Analyse**")
+    _show_items(_profile_value(profile, "interest_tags", []))
     st.markdown("**Meiden**")
-    _show_items(profile.avoid)
-    if profile.past_destinations:
+    _show_items(_profile_value(profile, "avoid", []))
+    past_destinations = _profile_value(profile, "past_destinations", [])
+    if past_destinations:
         st.markdown("**Bisherige Ziele**")
-        st.write(", ".join(profile.past_destinations))
+        st.write(", ".join(past_destinations))
     with st.expander("Profil als JSON", expanded=False):
-        st.json(
-            {
-                "user_id": profile.user_id,
-                "interests": profile.interests,
-                "travel_style": profile.travel_style,
-                "budget_preference": profile.budget_preference,
-                "avoid": profile.avoid,
-                "preferred_day_structure": profile.preferred_day_structure,
-                "past_destinations": profile.past_destinations,
-                "uploaded_sources": profile.uploaded_sources,
-            }
-        )
+        st.json(_profile_dict(profile))
 
 
 def _show_weather_summary(weather: dict) -> None:
@@ -293,9 +324,9 @@ def _show_agentic_tool_workflow(workflow: dict) -> None:
     if risks:
         st.markdown("### Risiken")
         _show_structured_items(risks)
-    coverage = workflow.get("interest_coverage") or {}
+    coverage = workflow.get("wish_coverage") or {}
     if coverage:
-        st.markdown("### Interest Coverage")
+        st.markdown("### Wunschabdeckung")
         st.json(coverage)
     if not workflow.get("enabled"):
         return
@@ -387,7 +418,8 @@ def _show_memory_context(memory_context) -> None:
 
 def _profile_memory_facts(text: str) -> list[str]:
     labels = {
-        "Interests": "Interessen",
+        "Interest tags": "Tags",
+        "Preference notes": "Praeferenznotizen",
         "Avoid": "Meiden",
         "Travel style": "Reisestil",
         "Budget preference": "Budgetpraeferenz",
@@ -517,7 +549,6 @@ with st.sidebar:
     user_id = _select_user_profile()
     travel_style = "balanced"
     budget_preference = "medium"
-    interests: list[str] = []
     feedback = ""
 
     memory = load_user_profile(user_id)
@@ -598,12 +629,12 @@ with st.expander("Optional: Gmail-Newsletter als Preference-Signale verbinden", 
         st.write(f"Verbundenes Gmail-Konto: {gmail_account_email}")
     if gmail_messages:
         st.markdown("**Gefundene Newsletter-Mails**")
-        kept_gmail_interests = sorted(
+        kept_gmail_interest_tags = sorted(
             {
                 interest
                 for message in gmail_messages
                 if message.keep_as_preference
-                for interest in message.inferred_interests
+                for interest in message.inferred_interest_tags
             }
         )
         kept_budget_signals = sorted(
@@ -621,7 +652,7 @@ with st.expander("Optional: Gmail-Newsletter als Preference-Signale verbinden", 
             }
         )
         summary_cols = st.columns(3)
-        summary_cols[0].write("**Aus Gmail erkannte Interessen:** " + (", ".join(kept_gmail_interests) or "Keine"))
+        summary_cols[0].write("**Aus Gmail erkannte Tags:** " + (", ".join(kept_gmail_interest_tags) or "Keine"))
         summary_cols[1].write("**Budget-Signale:** " + (", ".join(kept_budget_signals) or "Keine"))
         summary_cols[2].write("**Reisestil-Signale:** " + (", ".join(kept_style_signals) or "Keine"))
         st.dataframe(
@@ -634,7 +665,7 @@ with st.expander("Optional: Gmail-Newsletter als Preference-Signale verbinden", 
                     "Relevanz": message.travel_relevance_score,
                     "Signal": message.signal_strength,
                     "Keep": "Ja" if message.keep_as_preference else "Nein",
-                    "Interessen": ", ".join(message.inferred_interests),
+                    "Interest Tags": ", ".join(message.inferred_interest_tags),
                     "Grund/Zusammenfassung": message.preference_summary or message.ignore_reason,
                     "Snippet": message.snippet,
                 }
@@ -693,14 +724,15 @@ if generate:
             st.success(f"{len(gmail_sources)} Gmail-Newsletter-Quelle(n) ins Preference Learning uebernommen.")
         parsed_request = parse_travel_request(
             request_text,
-            TravelRequest(
+            _travel_request_fallback(
                 destination="",
                 destination_scope="open",
                 duration_days=3,
                 budget=600,
-                interests=interests,
                 must_have=[],
                 avoid=[],
+                interest_tags=[],
+                query_hints=[],
                 travel_style=travel_style,
             ),
         )
@@ -710,7 +742,6 @@ if generate:
                 destination=parsed_request.destination,
                 days=parsed_request.duration_days,
                 budget=parsed_request.budget,
-                manual_interests=parsed_request.interests,
                 travel_style=parsed_request.travel_style,
                 budget_preference=budget_preference,
                 feedback=feedback or None,
@@ -719,6 +750,8 @@ if generate:
                 destination_scope=parsed_request.destination_scope,
                 needs_destination_recommendation=parsed_request.needs_destination_recommendation,
                 must_have=parsed_request.must_have,
+                interest_tags=parsed_request.interest_tags,
+                query_hints=parsed_request.query_hints,
             )
     except (MissingOpenAIKeyError, MissingLocalAIError) as exc:
         st.error(str(exc))
@@ -732,6 +765,22 @@ if generate:
     st.markdown("### Agent Workflow")
     for step in result.workflow_steps:
         st.write(f"- {step}")
+
+    if result.place_queries:
+        with st.expander("Query Planning: Google-Places-Suchanfragen", expanded=False):
+            st.dataframe(
+                [
+                    {
+                        "query": query.query,
+                        "reason": query.reason,
+                        "source": query.source,
+                        "must_have": ", ".join(query.must_have),
+                    }
+                    for query in result.place_queries
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
 
     profile_col, weather_col, validation_col = st.columns(3)
     with profile_col:
@@ -794,7 +843,11 @@ if generate:
             st.metric("Gesamtkosten", f"{result.itinerary.total_cost:g} {result.itinerary.currency}")
             st.metric("Budget", f"{parsed_request.budget:g} {result.itinerary.currency}")
             st.markdown("### Warum der Plan passt")
-            _show_items(result.profile.interests, "Keine Praeferenzen erkannt.")
+            _show_items(
+                _profile_value(result.profile, "preference_notes", [])
+                or _profile_value(result.profile, "interest_tags", []),
+                "Keine Praeferenzen erkannt.",
+            )
         with todo_col:
             st.markdown("### Packliste")
             pack_items = ["bequeme Schuhe", "Powerbank", "Reisedokumente"]

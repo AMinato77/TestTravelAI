@@ -15,6 +15,7 @@ from app.tools.gmail_tool import (
 )
 from app.agents.preference_agent import extract_preferences
 from app.models.preference_source import PreferenceSource
+from app.models.travel_request import TravelRequest
 from app.tools import openai_runtime
 
 
@@ -70,7 +71,7 @@ def main() -> None:
                     "keep": True,
                     "travel_relevance_score": 0.6,
                     "signal_strength": "medium",
-                    "interests": [],
+                    "interest_tags": [],
                     "budget_signal": "unknown",
                     "travel_style_signal": "adventure",
                     "avoid": [],
@@ -81,22 +82,26 @@ def main() -> None:
         },
     )
     assert classified[0].keep_as_preference
-    assert "nature" in classified[0].inferred_interests
+    assert classified[0].inferred_interest_tags
 
     openai_runtime.ai_provider = lambda: "demo"
     profile = extract_preferences(
-        manual_interests=["food"],
-        travel_style="balanced",
+        request=TravelRequest(
+            destination="Rome",
+            must_have=["local food"],
+            interest_tags=["food"],
+            travel_style="balanced",
+        ),
         budget_preference="medium",
         preference_sources=[
             PreferenceSource(
                 source_type="email_newsletter",
                 name="gmail_newsletter_signals",
-                text="Interests: nature\nTravel style signal: relaxed\n",
+                text="Interest tags: nature\nTravel style signal: relaxed\n",
             )
         ],
     )
-    assert profile.interests == ["food", "nature"]
+    assert "local food" in profile.preference_notes
 
     queries = _gmail_queries("", 30)
     assert "newer_than:30d" in queries[0]

@@ -6,7 +6,8 @@ from dataclasses import asdict, dataclass, field
 @dataclass(slots=True)
 class UserProfile:
     user_id: str = "demo_user_1"
-    interests: list[str] = field(default_factory=list)
+    interest_tags: list[str] = field(default_factory=list)
+    preference_notes: list[str] = field(default_factory=list)
     budget_preference: str = "medium"
     travel_style: str = "balanced"
     avoid: list[str] = field(default_factory=list)
@@ -16,8 +17,8 @@ class UserProfile:
     feedback_history: list[str] = field(default_factory=list)
     uploaded_sources: list[str] = field(default_factory=list)
 
-    def merged_interests(self, manual_interests: list[str]) -> list[str]:
-        values = [*self.interests, *manual_interests]
+    def merged_interest_tags(self, current_tags: list[str]) -> list[str]:
+        values = [*self.interest_tags, *current_tags]
         return sorted({value.strip().lower() for value in values if value.strip()})
 
     def to_dict(self) -> dict:
@@ -27,7 +28,8 @@ class UserProfile:
     def from_dict(cls, data: dict) -> "UserProfile":
         return cls(
             user_id=data.get("user_id", "demo_user_1"),
-            interests=data.get("interests", []),
+            interest_tags=data.get("interest_tags", []),
+            preference_notes=data.get("preference_notes", []),
             budget_preference=data.get("budget_preference", "medium"),
             travel_style=data.get("travel_style", "balanced"),
             avoid=data.get("avoid", []),

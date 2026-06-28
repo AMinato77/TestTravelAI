@@ -23,7 +23,7 @@ def resolve_destination(request: TravelRequest) -> dict:
             system_prompt=(
                 "You are a Destination Decision Agent for a travel planner. "
                 "If the user gave a country/region or asked which city is best, choose one concrete city. "
-                "Optimize for interests, avoid list, travel style, and realistic availability "
+                "Optimize for concrete must-have wishes, query hints, avoid list, travel style, and realistic availability "
                 "of activities. Return strict JSON with keys: destination, summary, candidates. "
                 "candidates is a list of objects with city, score, reason. "
                 "Never choose a fallback city from old memory when the request explicitly names a country."
@@ -32,7 +32,9 @@ def resolve_destination(request: TravelRequest) -> dict:
                 "destination": request.destination,
                 "destination_scope": request.destination_scope,
                 "needs_destination_recommendation": request.needs_destination_recommendation,
-                "interests": request.interests,
+                "must_have": request.must_have,
+                "query_hints": request.query_hints,
+                "interest_tags": request.interest_tags,
                 "avoid": request.avoid,
                 "duration_days": request.duration_days,
                 "budget": {"amount": request.budget, "currency": "EUR"},

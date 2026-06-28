@@ -20,19 +20,19 @@ def main() -> None:
         pass
 
     destination = sys.argv[1] if len(sys.argv) > 1 else "Barcelona"
-    interests = sys.argv[2].split(",") if len(sys.argv) > 2 else ["food", "culture", "local spots"]
+    queries = sys.argv[2].split(",") if len(sys.argv) > 2 else ["local food markets", "cultural attractions", "local neighborhoods"]
     days = int(sys.argv[3]) if len(sys.argv) > 3 else 3
 
     from app.tools.places_tool import search_indoor_places, search_places
     from app.tools.weather_tool import get_weather
 
     weather = get_weather(destination, days=days)
-    activities = search_places(destination, interests, limit=10)
+    activities = search_places(destination, queries, limit=10)
     indoor_alternatives = search_indoor_places(destination, limit=6) if weather.get("rain_expected") else []
 
     context = {
         "destination": destination,
-        "interests": interests,
+        "queries": queries,
         "weather": weather,
         "activities": [asdict(activity) for activity in activities],
         "indoor_alternatives": [asdict(activity) for activity in indoor_alternatives],

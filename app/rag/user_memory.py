@@ -58,7 +58,8 @@ def save_user_profile(profile: UserProfile) -> None:
     """Persist a profile snapshot as an embedded ChromaDB memory."""
     safe_user_id = _safe_user_id(profile.user_id)
     profile.user_id = safe_user_id
-    profile.interests = _clean_interests(_as_list(profile.interests))
+    profile.interest_tags = _clean_interest_tags(_as_list(profile.interest_tags))
+    profile.preference_notes = _clean_source_notes(profile.preference_notes)
     profile.avoid = _clean_plain_values(profile.avoid)
     profile.source_notes = _clean_source_notes(profile.source_notes)
     profile.past_destinations = normalize_destinations(_as_list(profile.past_destinations))
@@ -71,7 +72,8 @@ def save_user_profile(profile: UserProfile) -> None:
         "source_type": "profile_snapshot",
         "source_name": "current_user_profile",
         "created_at": time.time(),
-        "interests_json": json.dumps(profile.interests, ensure_ascii=True),
+        "interest_tags_json": json.dumps(profile.interest_tags, ensure_ascii=True),
+        "preference_notes_json": json.dumps(profile.preference_notes, ensure_ascii=True),
         "budget_preference": profile.budget_preference,
         "travel_style": profile.travel_style,
         "avoid_json": json.dumps(profile.avoid, ensure_ascii=True),
@@ -95,18 +97,18 @@ def update_user_profile(
     existing: UserProfile,
     extracted: UserProfile,
     destination: str,
-    manual_interests: list[str],
+    current_interest_tags: list[str],
     manual_avoid: list[str] | None = None,
     feedback: str | None = None,
     uploaded_sources: list[str] | None = None,
-    replace_existing_interests: bool = False,
+    replace_existing_tags: bool = False,
 ) -> UserProfile:
-    if replace_existing_interests:
-        interests = _merge_unique(extracted.interests)
-    elif _as_list(manual_interests):
-        interests = _merge_unique(extracted.interests, manual_interests)
+    if replace_existing_tags:
+        interest_tags = _merge_unique(extracted.interest_tags)
+    elif _as_list(current_interest_tags):
+        interest_tags = _merge_unique(extracted.interest_tags, current_interest_tags)
     else:
-        interests = _merge_unique(existing.interests, extracted.interests)
+        interest_tags = _merge_unique(existing.interest_tags, extracted.interest_tags)
     avoid = _merge_unique(existing.avoid, extracted.avoid, manual_avoid or [])
     past_destinations = normalize_destinations([*existing.past_destinations, normalize_destination(destination)])
     feedback_history = existing.feedback_history[:]
@@ -116,7 +118,8 @@ def update_user_profile(
 
     profile = UserProfile(
         user_id=existing.user_id,
-        interests=interests,
+        interest_tags=interest_tags,
+        preference_notes=_merge_unique(existing.preference_notes, extracted.preference_notes),
         budget_preference=extracted.budget_preference or existing.budget_preference,
         travel_style=extracted.travel_style or existing.travel_style,
         avoid=avoid,
@@ -141,7 +144,8 @@ def _safe_user_id(user_id: str) -> str:
 def _profile_from_metadata(metadata: dict, fallback_user_id: str) -> UserProfile:
     return UserProfile(
         user_id=str(metadata.get("user_id") or fallback_user_id),
-        interests=_clean_interests(_json_list(metadata.get("interests_json"))),
+        interest_tags=_clean_interest_tags(_json_list(metadata.get("interest_tags_json"))),
+        preference_notes=_clean_source_notes(_json_list(metadata.get("preference_notes_json"))),
         budget_preference=str(metadata.get("budget_preference") or "medium"),
         travel_style=str(metadata.get("travel_style") or "balanced"),
         avoid=_json_list(metadata.get("avoid_json")),
@@ -156,7 +160,8 @@ def _profile_from_metadata(metadata: dict, fallback_user_id: str) -> UserProfile
 def _profile_document(profile: UserProfile) -> str:
     lines = [
         f"User profile: {profile.user_id}",
-        f"Interests: {', '.join(profile.interests) or 'none'}",
+        f"Interest tags: {', '.join(profile.interest_tags) or 'none'}",
+        f"Preference notes: {' | '.join(profile.preference_notes[-8:]) or 'none'}",
         f"Avoid: {', '.join(profile.avoid) or 'none'}",
         f"Travel style: {profile.travel_style}",
         f"Budget preference: {profile.budget_preference}",
@@ -194,7 +199,7 @@ def _merge_unique(*groups: list[str]) -> list[str]:
     return values
 
 
-def _clean_interests(values) -> list[str]:
+def _clean_interest_tags(values) -> list[str]:
     return [
         value.strip().lower()
         for value in _as_list(values)
@@ -242,7 +247,7 @@ def _is_corrupt_source_note(note: str) -> bool:
         return False
     if lower.startswith("profile_snapshot:"):
         return True
-    if "manual_interests=" in lower or "past_destinations=" in lower:
+    if "past_destinations=" in lower:
         return True
     if "source:" in lower and "profile:" in lower:
         return True

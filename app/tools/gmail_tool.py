@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.models.preference_source import PreferenceSource
-from app.services.interest_taxonomy import normalize_interests, taxonomy_payload
 from app.tools.openai_runtime import demo_fallback_enabled, generate_json
 
 
@@ -47,7 +46,7 @@ class GmailNewsletterMessage:
     keep_as_preference: bool = False
     travel_relevance_score: float = 0.0
     signal_strength: str = "none"
-    inferred_interests: list[str] = field(default_factory=list)
+    inferred_interest_tags: list[str] = field(default_factory=list)
     budget_signal: str = ""
     travel_style_signal: str = ""
     avoid: list[str] = field(default_factory=list)
@@ -366,7 +365,7 @@ def _classify_newsletter_messages(messages: list[GmailNewsletterMessage]) -> lis
                 "Do not infer shopping from a shop sender, coupon, or newsletter signup alone. "
                 "Keep only signals that can improve travel planning. "
                 "Return strict JSON with key messages. Each item must contain: index, keep, travel_relevance_score "
-                "from 0 to 1, signal_strength as none/weak/medium/strong, interests using only allowed_interests, "
+                "from 0 to 1, signal_strength as none/weak/medium/strong, interest_tags as optional broad labels, "
                 "budget_signal as low/medium/high/unknown, travel_style_signal as relaxed/adventure/luxury/budget/balanced/unknown, "
                 "avoid as list, summary as one concise evidence-based sentence, and reason."
             ),
@@ -382,7 +381,6 @@ def _classify_newsletter_messages(messages: list[GmailNewsletterMessage]) -> lis
                     }
                     for index, message in enumerate(messages, start=1)
                 ],
-                **taxonomy_payload(),
             },
             model_env="OPENAI_GMAIL_SIGNAL_MODEL",
         )
@@ -411,7 +409,7 @@ def _apply_ai_classification(messages: list[GmailNewsletterMessage], data: dict)
             continue
         fallback = _classify_message_fallback(_copy_message(message))
         score = _score(row.get("travel_relevance_score"))
-        interests = normalize_interests(row.get("interests") or []) or fallback.inferred_interests
+        interest_tags = _normalize_interest_tags(row.get("interest_tags") or []) or fallback.inferred_interest_tags
         summary = _clean_text(str(row.get("summary") or ""))
         reason = _clean_text(str(row.get("reason") or ""))
         keep = bool(row.get("keep")) and score >= 0.45 and bool(summary)
@@ -420,7 +418,7 @@ def _apply_ai_classification(messages: list[GmailNewsletterMessage], data: dict)
         message.keep_as_preference = keep
         message.travel_relevance_score = score
         message.signal_strength = _normalize_signal_strength(row.get("signal_strength"), score)
-        message.inferred_interests = interests
+        message.inferred_interest_tags = interest_tags
         message.budget_signal = _normalize_choice(row.get("budget_signal"), {"low", "medium", "high", "unknown"}, "unknown")
         message.travel_style_signal = _normalize_choice(
             row.get("travel_style_signal"),
@@ -512,9 +510,9 @@ def _classify_message_fallback(message: GmailNewsletterMessage) -> GmailNewslett
     if not any(term in text for term in travel_terms):
         return _ignored_message(message, "Kein ausreichend klares Reisepräferenzsignal gefunden.")
 
-    interests: list[str] = []
+    interest_tags: list[str] = []
     if any(term in text for term in ["restaurant", "food", "cuisine", "essen", "tapas", "street food"]):
-        interests.append("food")
+        interest_tags.append("food")
     if any(
         term in text
         for term in [
@@ -531,13 +529,13 @@ def _classify_message_fallback(message: GmailNewsletterMessage) -> GmailNewslett
             "natururlaub",
         ]
     ):
-        interests.append("nature")
+        interest_tags.append("nature")
     if any(term in text for term in ["museum", "gallery", "festival", "culture", "kultur", "kunst"]):
-        interests.append("culture")
+        interest_tags.append("culture")
     if any(term in text for term in ["hidden gem", "geheimtipp", "local", "lokal", "viertel"]):
-        interests.extend(["hidden gems", "local spots"])
+        interest_tags.extend(["hidden gems", "local spots"])
     if any(term in text for term in ["shopping street", "mall", "einkaufen", "shopping"]):
-        interests.append("shopping")
+        interest_tags.append("shopping")
 
     budget_signal = "unknown"
     if any(term in text for term in ["deal", "angebot", "rabatt", "discount", "%", "gutschein", "cheap", "günstig", "guenstig"]):
@@ -547,9 +545,9 @@ def _classify_message_fallback(message: GmailNewsletterMessage) -> GmailNewslett
         travel_style_signal = "relaxed"
 
     message.keep_as_preference = True
-    message.travel_relevance_score = 0.65 if interests or budget_signal != "unknown" or travel_style_signal != "unknown" else 0.5
+    message.travel_relevance_score = 0.65 if interest_tags or budget_signal != "unknown" or travel_style_signal != "unknown" else 0.5
     message.signal_strength = "medium" if message.travel_relevance_score >= 0.6 else "weak"
-    message.inferred_interests = normalize_interests(interests)
+    message.inferred_interest_tags = _normalize_interest_tags(interest_tags)
     message.budget_signal = budget_signal
     message.travel_style_signal = travel_style_signal
     message.preference_summary = _build_fallback_summary(message)
@@ -561,7 +559,7 @@ def _ignored_message(message: GmailNewsletterMessage, reason: str) -> GmailNewsl
     message.keep_as_preference = False
     message.travel_relevance_score = 0.0
     message.signal_strength = "none"
-    message.inferred_interests = []
+    message.inferred_interest_tags = []
     message.budget_signal = "unknown"
     message.travel_style_signal = "unknown"
     message.preference_summary = ""
@@ -571,8 +569,8 @@ def _ignored_message(message: GmailNewsletterMessage, reason: str) -> GmailNewsl
 
 def _build_fallback_summary(message: GmailNewsletterMessage) -> str:
     parts = []
-    if message.inferred_interests:
-        parts.append(f"possible interests: {', '.join(message.inferred_interests)}")
+    if message.inferred_interest_tags:
+        parts.append(f"possible interest tags: {', '.join(message.inferred_interest_tags)}")
     if message.budget_signal != "unknown":
         parts.append(f"budget signal: {message.budget_signal}")
     if message.travel_style_signal != "unknown":
@@ -595,7 +593,7 @@ def _signals_to_preference_text(signals: list[GmailNewsletterMessage]) -> str:
                 f"Subject: {signal.subject or 'unknown'}",
                 f"Date: {signal.date or 'unknown'}",
                 f"Travel relevance: {signal.travel_relevance_score:.2f} ({signal.signal_strength})",
-                f"Interests: {', '.join(signal.inferred_interests) or 'none'}",
+                f"Interest tags: {', '.join(signal.inferred_interest_tags) or 'none'}",
                 f"Budget signal: {signal.budget_signal or 'unknown'}",
                 f"Travel style signal: {signal.travel_style_signal or 'unknown'}",
                 f"Avoid: {', '.join(signal.avoid) or 'none'}",
@@ -607,9 +605,25 @@ def _signals_to_preference_text(signals: list[GmailNewsletterMessage]) -> str:
 
 
 def _infer_weak_signal_tags(signal: GmailNewsletterMessage) -> list[str]:
-    if signal.inferred_interests:
-        return signal.inferred_interests
-    return _classify_message_fallback(signal).inferred_interests
+    if signal.inferred_interest_tags:
+        return signal.inferred_interest_tags
+    return _classify_message_fallback(signal).inferred_interest_tags
+
+
+def _normalize_interest_tags(values) -> list[str]:
+    if values is None:
+        return []
+    if isinstance(values, str):
+        values = [values]
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        cleaned = " ".join(str(value).strip().lower().split())
+        if not cleaned or cleaned in seen or cleaned in {"none", "unknown", "null", "n/a", "-"}:
+            continue
+        seen.add(cleaned)
+        result.append(cleaned)
+    return result
 
 
 def _score(value) -> float:

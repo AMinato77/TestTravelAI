@@ -15,12 +15,12 @@ load_dotenv(ROOT / ".env")
 
 def main() -> None:
     destination = sys.argv[1] if len(sys.argv) > 1 else "Barcelona"
-    interests = (sys.argv[2].split(",") if len(sys.argv) > 2 else ["food", "culture", "local spots"])
+    queries = (sys.argv[2].split(",") if len(sys.argv) > 2 else ["local food markets", "cultural attractions", "local neighborhoods"])
     limit = int(sys.argv[3]) if len(sys.argv) > 3 else 10
 
     from app.tools.places_tool import search_places
 
-    activities = search_places(destination, interests, limit=limit)
+    activities = search_places(destination, queries, limit=limit)
     print(json.dumps([asdict(activity) for activity in activities], ensure_ascii=False, indent=2))
 
 

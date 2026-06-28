@@ -4,19 +4,37 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="6f8cfc59-74e7-4b7e-861b-87745aea2197" name="Changes" comment="setrz">
+    <list default="true" id="6f8cfc59-74e7-4b7e-861b-87745aea2197" name="Changes" comment="rr">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/CODE_OVERVIEW.md" beforeDir="false" afterPath="$PROJECT_DIR$/CODE_OVERVIEW.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/agents/activity_evaluation_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/activity_evaluation_agent.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/agents/agentic_tool_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/agentic_tool_agent.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/agents/destination_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/destination_agent.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/agents/explanation_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/explanation_agent.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/agents/planning_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/planning_agent.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/agents/preference_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/preference_agent.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/agents/request_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/request_agent.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/models/activity.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/models/activity.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/models/travel_request.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/models/travel_request.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/models/user_profile.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/models/user_profile.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/orchestrator.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/orchestrator.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/rag/memory_retrieval.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/rag/memory_retrieval.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/rag/retrieval.py" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/app/rag/user_memory.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/rag/user_memory.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/services/budget_strategy.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/budget_strategy.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/services/destination_normalizer.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/destination_normalizer.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/services/itinerary_optimizer.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/itinerary_optimizer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/activity_ranker.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/interest_coverage.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/interest_taxonomy.py" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/app/services/itinerary_validator.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/itinerary_validator.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/tool_server.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tool_server.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/tools/gmail_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tools/gmail_tool.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/tools/places_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tools/places_tool.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/streamlit_app.py" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/streamlit_app.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/scripts/test_geoapify_places.py" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/test_geoapify_places.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/scripts/test_gmail_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/test_gmail_tool.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/scripts/test_itinerary_builder.py" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/test_itinerary_builder.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/scripts/test_itinerary_optimizer.py" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/test_itinerary_optimizer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/scripts/test_itinerary_validator.py" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/test_itinerary_validator.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/scripts/test_openai_connection.py" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/test_openai_connection.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/scripts/test_travel_data_pipeline.py" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/test_travel_data_pipeline.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -24,7 +42,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="394" />
+    <option name="cachedIndexableFilesCount" value="481" />
   </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
@@ -47,23 +65,23 @@
   </component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="1.8134956388812864" />
-      <entry key="MS500" value="4.3182508053214335" />
-      <entry key="S2" value="8.091414790701169" />
-      <entry key="S5" value="9.659349788858602" />
-      <entry key="S10" value="10.295235452843277" />
-      <entry key="S30" value="10.756910935330136" />
-      <entry key="S60" value="10.89314187298205" />
-      <entry key="M2" value="11.952771017479106" />
-      <entry key="M5" value="24.943243144594888" />
-      <entry key="M10" value="46.21755004970826" />
-      <entry key="M15" value="63.447027710855494" />
-      <entry key="M30" value="123.56878484694693" />
-      <entry key="H1" value="315.2099465673569" />
-      <entry key="H2" value="834.6508688205976" />
-      <entry key="H4" value="1936.7218939029558" />
-      <entry key="D1" value="10314.995398223042" />
-      <entry key="W1" value="17446.322746443766" />
+      <entry key="MS100" value="1.3440285164591295" />
+      <entry key="MS500" value="4.469638138658221" />
+      <entry key="S2" value="14.22934467928375" />
+      <entry key="S5" value="29.873630210749717" />
+      <entry key="S10" value="52.860670058476195" />
+      <entry key="S30" value="113.02182502563079" />
+      <entry key="S60" value="156.64404217063634" />
+      <entry key="M2" value="197.9968254707092" />
+      <entry key="M5" value="249.28158093750926" />
+      <entry key="M10" value="298.83224831094486" />
+      <entry key="M15" value="332.94852086377784" />
+      <entry key="M30" value="419.93791150771335" />
+      <entry key="H1" value="598.4760735046526" />
+      <entry key="H2" value="1015.6784995513606" />
+      <entry key="H4" value="2001.7688965626737" />
+      <entry key="D1" value="10458.70145262856" />
+      <entry key="W1" value="18268.321993858706" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
@@ -71,37 +89,37 @@
       <entry key="S2" value="0.0" />
       <entry key="S5" value="0.0" />
       <entry key="S10" value="0.0" />
-      <entry key="S30" value="7.491461020261479E-131" />
-      <entry key="S60" value="8.656058991490079E-66" />
-      <entry key="M2" value="2.969129128772888E-33" />
-      <entry key="M5" value="1.1206109696123073E-13" />
-      <entry key="M10" value="4.3379223493244005E-7" />
-      <entry key="M15" value="7.058276595098155E-5" />
-      <entry key="M30" value="0.011741211846269051" />
-      <entry key="H1" value="0.15277641622668003" />
-      <entry key="H2" value="0.552348418010516" />
-      <entry key="H4" value="1.0516376909938745" />
-      <entry key="D1" value="2.1007713981923586" />
-      <entry key="W1" value="2.813248811976059" />
+      <entry key="S30" value="2.792794556616455E-240" />
+      <entry key="S60" value="1.6713078002894077E-120" />
+      <entry key="M2" value="1.304659563083976E-60" />
+      <entry key="M5" value="1.2782097205725873E-24" />
+      <entry key="M10" value="1.4650599521622758E-12" />
+      <entry key="M15" value="1.588843379660706E-8" />
+      <entry key="M30" value="1.7615871426298715E-4" />
+      <entry key="H1" value="0.018713366451078746" />
+      <entry key="H2" value="0.19331293580173212" />
+      <entry key="H4" value="0.6221427491163065" />
+      <entry key="D1" value="1.9247874548021442" />
+      <entry key="W1" value="2.77830641559061" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="1.7626441456657718" />
-      <entry key="MS500" value="4.292581258396374" />
-      <entry key="S2" value="8.079140896260236" />
-      <entry key="S5" value="9.653432101248692" />
-      <entry key="S10" value="10.292069757406763" />
-      <entry key="S30" value="10.75580537855754" />
-      <entry key="S60" value="10.892581761864466" />
-      <entry key="M2" value="11.952464450790904" />
-      <entry key="M5" value="24.94298935207555" />
-      <entry key="M10" value="46.217315905731205" />
-      <entry key="M15" value="63.44688279016422" />
-      <entry key="M30" value="123.580263559628" />
-      <entry key="H1" value="315.36216405092387" />
-      <entry key="H2" value="835.2023753759847" />
-      <entry key="H4" value="1937.7726770515217" />
-      <entry key="D1" value="10317.09569250034" />
-      <entry key="W1" value="17449.135890521673" />
+      <entry key="MS100" value="1.3061259930749811" />
+      <entry key="MS500" value="4.444840249405583" />
+      <entry key="S2" value="14.210853016045377" />
+      <entry key="S5" value="29.858134149356022" />
+      <entry key="S10" value="52.846579165146395" />
+      <entry key="S30" value="113.01122417202545" />
+      <entry key="S60" value="156.63647706437035" />
+      <entry key="M2" value="197.99192246804407" />
+      <entry key="M5" value="249.27901924564492" />
+      <entry key="M10" value="298.8306491633414" />
+      <entry key="M15" value="332.94730856617736" />
+      <entry key="M30" value="419.9373129782277" />
+      <entry key="H1" value="598.4942111774666" />
+      <entry key="H2" value="1015.8711973537409" />
+      <entry key="H4" value="2002.3903469914756" />
+      <entry key="D1" value="10460.625766785164" />
+      <entry key="W1" value="18271.100191532198" />
     </decayedShown>
   </component>
   <component name="ProjectColorInfo">{
@@ -327,7 +345,15 @@
       <option name="project" value="LOCAL" />
       <updated>1781293215137</updated>
     </task>
-    <option name="localTasksCounter" value="6" />
+    <task id="LOCAL-00006" summary="rr">
+      <option name="closed" value="true" />
+      <created>1782073608842</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1782073608842</updated>
+    </task>
+    <option name="localTasksCounter" value="7" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -339,6 +365,7 @@
     <MESSAGE value="Weiterrecommit" />
     <MESSAGE value="GoogleApi und so" />
     <MESSAGE value="setrz" />
-    <option name="LAST_COMMIT_MESSAGE" value="setrz" />
+    <MESSAGE value="rr" />
+    <option name="LAST_COMMIT_MESSAGE" value="rr" />
   </component>
 </project>

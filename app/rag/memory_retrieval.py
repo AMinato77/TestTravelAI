@@ -173,13 +173,13 @@ def list_memory_user_ids() -> list[str]:
 
 def build_memory_query(
     destination: str,
-    interests: list[str],
+    query_terms: list[str],
     avoid: list[str],
     travel_style: str,
 ) -> str:
     return (
         f"Travel destination: {destination}. "
-        f"User interests: {', '.join(interests) or 'unknown'}. "
+        f"Concrete user wishes and query terms: {', '.join(query_terms) or 'unknown'}. "
         f"User avoid preferences: {', '.join(avoid) or 'none'}. "
         f"Travel style: {travel_style}. "
         "Find relevant past preferences, travel ratings, notes, dislikes, and planning constraints."

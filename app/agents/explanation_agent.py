@@ -78,7 +78,7 @@ def _demo_explanation(
             "gefundenen Aktivitaeten und Budgetregeln erstellt."
         ),
         "preference_reasoning": [
-            f"Beruecksichtigte Interessen: {', '.join(profile.interests) or 'keine'}",
+            f"Beruecksichtigte Praeferenzen: {', '.join(profile.preference_notes or profile.interest_tags) or 'keine'}",
             f"Reisestil: {profile.travel_style}",
             f"Budgetpraeferenz: {profile.budget_preference}",
             _budget_quality_sentence(itinerary, profile, budget),

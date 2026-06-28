@@ -21,7 +21,7 @@ app = FastAPI(title="TravelAI Tool Server", version="1.0.0")
 
 class PlacesSearchRequest(BaseModel):
     destination: str
-    interests: list[str] = Field(default_factory=list)
+    queries: list[str] = Field(default_factory=list)
     avoid: list[str] = Field(default_factory=list)
     limit: int = 20
 
@@ -73,7 +73,7 @@ def health() -> dict:
 def places_search(request: PlacesSearchRequest) -> dict:
     activities = search_places(
         destination=request.destination,
-        interests=request.interests,
+        queries=request.queries,
         avoid=request.avoid,
         limit=request.limit,
     )

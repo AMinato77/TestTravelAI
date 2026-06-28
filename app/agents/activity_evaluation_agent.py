@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from app.models.activity import Activity
 from app.models.user_profile import UserProfile
-from app.services.interest_coverage import rebalance_for_interest_coverage
 from app.tools.openai_runtime import demo_fallback_enabled, generate_json
 
 
@@ -48,13 +47,12 @@ def evaluate_activities(
             system_prompt=(
                 "You are an Activity Evaluation Agent for a travel planner. "
                 "Your job is to judge whether each provided activity is a meaningful fit "
-                "for the user's destination, interests, avoid preferences, budget, and travel style. "
+                "for the user's destination, concrete wishes, preference notes, avoid preferences, budget, and travel style. "
                 "Do not invent new activities. Only evaluate activities from the input list. "
-                "The destination match and user interests are critical. "
+                "The destination match and concrete user wishes are critical. "
                 "Remove candidates that are in another city/country or only weakly match a required theme. "
                 "Be strict: if an activity only incidentally mentions an interest but its main category "
                 "does not match, give it a low score or keep=false. "
-                "Example: a gaming cafe with 'casual food' is not a strong food activity unless gaming is requested. "
                 "Return strict JSON with key evaluations. evaluations is a list with keys: "
                 "name, keep, score, reason. score must be 0-10."
             ),
@@ -74,7 +72,6 @@ def evaluate_activities(
 
     evaluations = _parse_evaluations(data.get("evaluations", []))
     kept, report = _apply_evaluations(activities, evaluations, limit, profile, constraints)
-    kept = rebalance_for_interest_coverage(kept, activities, profile.interests, limit)
     return _restore_minimum_coverage(kept, activities, report, limit, constraints)
 
 
@@ -195,7 +192,6 @@ def _apply_hard_category_guard(
     constraints: dict,
 ) -> tuple[bool, int, str]:
     """Simple Python safety rule after GPT evaluation."""
-    requested = {interest.lower() for interest in profile.interests}
     activity_text = f"{activity.name} {activity.category} {activity.description}".lower()
     if _activity_conflicts_with_avoid(activity, _constraint_avoid_terms(constraints) or profile.avoid):
         return (
@@ -203,13 +199,9 @@ def _apply_hard_category_guard(
             0,
             reason or "Removed because it conflicts with user avoid preferences.",
         )
-    special_categories = {"gaming", "nightlife", "anime", "shopping", "technology", "sport"}
-    if activity.category in special_categories and activity.category not in requested:
-        return (
-            False,
-            min(score, 3),
-            reason or f"Main category is {activity.category}, but the user did not request it.",
-        )
+    wishes = _constraint_wishes(constraints) or profile.preference_notes
+    if wishes and not _matches_any_wish(activity_text, wishes):
+        return keep, min(score, 6), reason or "Kept with lower confidence because it only weakly matches concrete wishes."
     return keep, score, reason
 
 
@@ -218,6 +210,13 @@ def _constraint_avoid_terms(constraints: dict | None) -> list[str]:
         return []
     avoid = constraints.get("avoid") or []
     return [str(item).strip().lower() for item in avoid if str(item).strip()]
+
+
+def _constraint_wishes(constraints: dict | None) -> list[str]:
+    if not constraints:
+        return []
+    values = [*(constraints.get("must_have") or []), *(constraints.get("query_hints") or [])]
+    return [str(item).strip().lower() for item in values if str(item).strip()]
 
 
 def _activity_conflicts_with_avoid(activity: Activity, avoid: list[str]) -> bool:
@@ -235,6 +234,10 @@ def _activity_conflicts_with_avoid(activity: Activity, avoid: list[str]) -> bool
     if any(term in avoid_text for term in ["nightlife", "club", "clubs"]):
         return category == "nightlife" or any(term in haystack for term in ["club", "nightlife", "bar"])
     return any(term and term in haystack for term in avoid)
+
+
+def _matches_any_wish(activity_text: str, wishes: list[str]) -> bool:
+    return any(_overlaps_soft_request_hint(activity_text, wish) for wish in wishes)
 
 
 def _overlaps_soft_request_hint(activity_text: str, request_hint_text: str) -> bool:
@@ -272,7 +275,7 @@ def _demo_evaluate_activities(
     profile: UserProfile,
     limit: int,
 ) -> tuple[list[Activity], dict]:
-    interest_text = " ".join(profile.interests).lower()
+    wish_text = " ".join(profile.preference_notes).lower()
     avoid_text = " ".join(profile.avoid).lower()
     evaluations: list[dict] = []
     ranked: list[tuple[int, Activity]] = []
@@ -283,23 +286,14 @@ def _demo_evaluate_activities(
         reason = "Kept by demo evaluator."
         keep = True
 
-        if activity.category in interest_text:
+        if _matches_any_wish(haystack, profile.preference_notes):
             score += 3
         if activity.category in avoid_text:
             score -= 7
             reason = "Removed because category conflicts with avoid preferences."
-        if activity.category == "gaming" and "gaming" not in interest_text:
-            score -= 4
-            reason = "Removed because gaming is not requested."
-        if activity.category == "nightlife" and "nightlife" not in interest_text:
-            score -= 3
-            reason = "Removed because nightlife is not requested."
         if any(term in avoid_text for term in ["food", "restaurant", "cafe"]) and activity.category == "food":
             score -= 8
             reason = "Removed because food conflicts with avoid preferences."
-        if "food" in interest_text and activity.category == "gaming" and "food" in haystack:
-            score -= 3
-            reason = "Removed because food is only incidental to a gaming activity."
 
         keep = score >= 5
         evaluation = {
@@ -315,7 +309,7 @@ def _demo_evaluate_activities(
             ranked.append((evaluation["score"], activity))
 
     ranked.sort(key=lambda item: item[0], reverse=True)
-    kept = rebalance_for_interest_coverage([activity for _, activity in ranked[:limit]], activities, profile.interests, limit)
+    kept = [activity for _, activity in ranked[:limit]]
     return kept, {
         "evaluations": evaluations,
         "removed": [evaluation for evaluation in evaluations if not evaluation["keep"]],

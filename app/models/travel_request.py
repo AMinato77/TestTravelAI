@@ -11,7 +11,8 @@ class TravelRequest:
     destination_reasoning: str = ""
     duration_days: int = 3
     budget: float = 600
-    interests: list[str] = field(default_factory=list)
     must_have: list[str] = field(default_factory=list)
     avoid: list[str] = field(default_factory=list)
+    interest_tags: list[str] = field(default_factory=list)
+    query_hints: list[str] = field(default_factory=list)
     travel_style: str = "balanced"

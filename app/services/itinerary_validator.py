@@ -5,7 +5,7 @@ import re
 from app.models.itinerary import Itinerary, ValidationIssue, ValidationResult
 from app.models.user_profile import UserProfile
 from app.services.budget_strategy import budget_utilization, target_budget_range
-from app.services.destination_normalizer import destination_matches_text, normalize_destination
+from app.services.semantic_validation import semantic_issues
 
 
 def validate_itinerary_rules(
@@ -138,20 +138,7 @@ def validate_itinerary_rules(
                 )
             )
 
-    expected_destination = normalize_destination(itinerary.destination)
-    if expected_destination:
-        for day in itinerary.days:
-            for activity in day.activities:
-                if _activity_has_foreign_location(activity, expected_destination):
-                    issues.append(
-                        ValidationIssue(
-                            severity="error",
-                            issue_type="destination_mismatch",
-                            activity=activity.name,
-                            day=day.day,
-                            message=f"Activity appears to be outside the destination {itinerary.destination}.",
-                        )
-                    )
+    issues.extend(semantic_issues(itinerary, constraints))
 
     error_count = sum(1 for issue in issues if issue.severity == "error")
     warning_count = sum(1 for issue in issues if issue.severity == "warning")
@@ -238,11 +225,3 @@ def _content_tokens(text: str) -> list[str]:
     tokens = re.findall(r"[a-z0-9äöüß]+", text.lower())
     return [token for token in tokens if len(token) > 2 and token not in stop_words]
 
-
-def _activity_has_foreign_location(activity, expected_destination: str) -> bool:
-    description = activity.description.lower()
-    address_match = re.search(r"address:\s*([^|]+)", description)
-    if address_match:
-        address = address_match.group(1).strip()
-        return bool(address and not destination_matches_text(expected_destination, address))
-    return False
