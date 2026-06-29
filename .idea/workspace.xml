@@ -4,37 +4,12 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="6f8cfc59-74e7-4b7e-861b-87745aea2197" name="Changes" comment="rr">
+    <list default="true" id="6f8cfc59-74e7-4b7e-861b-87745aea2197" name="Changes" comment="queriesave">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/agents/activity_evaluation_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/activity_evaluation_agent.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/agents/agentic_tool_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/agentic_tool_agent.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/agents/destination_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/destination_agent.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/agents/explanation_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/explanation_agent.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/agents/planning_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/planning_agent.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/agents/preference_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/preference_agent.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/agents/request_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/request_agent.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/models/activity.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/models/activity.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/models/travel_request.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/models/travel_request.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/models/user_profile.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/models/user_profile.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/orchestrator.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/orchestrator.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/rag/memory_retrieval.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/rag/memory_retrieval.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/rag/retrieval.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/rag/user_memory.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/rag/user_memory.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/services/activity_ranker.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/services/interest_coverage.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/services/interest_taxonomy.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/itinerary_optimizer.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/itinerary_optimizer.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/services/itinerary_validator.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/itinerary_validator.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/tool_server.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tool_server.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/tools/gmail_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tools/gmail_tool.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/tools/places_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tools/places_tool.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/streamlit_app.py" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/streamlit_app.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/scripts/test_geoapify_places.py" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/test_geoapify_places.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/scripts/test_gmail_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/test_gmail_tool.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/scripts/test_itinerary_builder.py" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/test_itinerary_builder.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/scripts/test_itinerary_optimizer.py" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/test_itinerary_optimizer.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/scripts/test_itinerary_validator.py" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/test_itinerary_validator.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/scripts/test_openai_connection.py" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/test_openai_connection.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/scripts/test_travel_data_pipeline.py" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/test_travel_data_pipeline.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -42,7 +17,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="481" />
+    <option name="cachedIndexableFilesCount" value="485" />
   </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
@@ -65,23 +40,23 @@
   </component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="1.3440285164591295" />
-      <entry key="MS500" value="4.469638138658221" />
-      <entry key="S2" value="14.22934467928375" />
-      <entry key="S5" value="29.873630210749717" />
-      <entry key="S10" value="52.860670058476195" />
-      <entry key="S30" value="113.02182502563079" />
-      <entry key="S60" value="156.64404217063634" />
-      <entry key="M2" value="197.9968254707092" />
-      <entry key="M5" value="249.28158093750926" />
-      <entry key="M10" value="298.83224831094486" />
-      <entry key="M15" value="332.94852086377784" />
-      <entry key="M30" value="419.93791150771335" />
-      <entry key="H1" value="598.4760735046526" />
-      <entry key="H2" value="1015.6784995513606" />
-      <entry key="H4" value="2001.7688965626737" />
-      <entry key="D1" value="10458.70145262856" />
-      <entry key="W1" value="18268.321993858706" />
+      <entry key="MS100" value="1.806022267993836" />
+      <entry key="MS500" value="4.907622764660908" />
+      <entry key="S2" value="10.947044518021297" />
+      <entry key="S5" value="14.075041244746837" />
+      <entry key="S10" value="15.438304879447882" />
+      <entry key="S30" value="18.35270418172737" />
+      <entry key="S60" value="26.969261371322553" />
+      <entry key="M2" value="56.07533516415632" />
+      <entry key="M5" value="172.84241837781826" />
+      <entry key="M10" value="296.46744950008946" />
+      <entry key="M15" value="369.1447897823366" />
+      <entry key="M30" value="495.11704021181475" />
+      <entry key="H1" value="673.3010751833905" />
+      <entry key="H2" value="1090.784072583956" />
+      <entry key="H4" value="2044.0360795973127" />
+      <entry key="D1" value="10706.612855118628" />
+      <entry key="W1" value="19784.421589784855" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
@@ -89,37 +64,37 @@
       <entry key="S2" value="0.0" />
       <entry key="S5" value="0.0" />
       <entry key="S10" value="0.0" />
-      <entry key="S30" value="2.792794556616455E-240" />
-      <entry key="S60" value="1.6713078002894077E-120" />
-      <entry key="M2" value="1.304659563083976E-60" />
-      <entry key="M5" value="1.2782097205725873E-24" />
-      <entry key="M10" value="1.4650599521622758E-12" />
-      <entry key="M15" value="1.588843379660706E-8" />
-      <entry key="M30" value="1.7615871426298715E-4" />
-      <entry key="H1" value="0.018713366451078746" />
-      <entry key="H2" value="0.19331293580173212" />
-      <entry key="H4" value="0.6221427491163065" />
-      <entry key="D1" value="1.9247874548021442" />
-      <entry key="W1" value="2.77830641559061" />
+      <entry key="S30" value="1.3744833972156244E-142" />
+      <entry key="S60" value="1.1724905784911649E-71" />
+      <entry key="M2" value="3.4713626800750455E-36" />
+      <entry key="M5" value="8.557481578553773E-15" />
+      <entry key="M10" value="1.5689728231853012E-7" />
+      <entry key="M15" value="4.441760416863623E-5" />
+      <entry key="M30" value="0.01307746141908103" />
+      <entry key="H1" value="0.22804493874744466" />
+      <entry key="H2" value="0.980992626007654" />
+      <entry key="H4" value="2.188019993261802" />
+      <entry key="D1" value="5.1866550313133475" />
+      <entry key="W1" value="6.647132550574403" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="1.3061259930749811" />
-      <entry key="MS500" value="4.444840249405583" />
-      <entry key="S2" value="14.210853016045377" />
-      <entry key="S5" value="29.858134149356022" />
-      <entry key="S10" value="52.846579165146395" />
-      <entry key="S30" value="113.01122417202545" />
-      <entry key="S60" value="156.63647706437035" />
-      <entry key="M2" value="197.99192246804407" />
-      <entry key="M5" value="249.27901924564492" />
-      <entry key="M10" value="298.8306491633414" />
-      <entry key="M15" value="332.94730856617736" />
-      <entry key="M30" value="419.9373129782277" />
-      <entry key="H1" value="598.4942111774666" />
-      <entry key="H2" value="1015.8711973537409" />
-      <entry key="H4" value="2002.3903469914756" />
-      <entry key="D1" value="10460.625766785164" />
-      <entry key="W1" value="18271.100191532198" />
+      <entry key="MS100" value="1.749972941702104" />
+      <entry key="MS500" value="4.881329935212628" />
+      <entry key="S2" value="10.933672263192364" />
+      <entry key="S5" value="14.06824141830754" />
+      <entry key="S10" value="15.434584822390851" />
+      <entry key="S30" value="18.351246335605943" />
+      <entry key="S60" value="26.968218097106288" />
+      <entry key="M2" value="56.07428023933642" />
+      <entry key="M5" value="172.8411292386944" />
+      <entry key="M10" value="296.46634190699376" />
+      <entry key="M15" value="369.1439127623515" />
+      <entry key="M30" value="495.1294784337746" />
+      <entry key="H1" value="673.5285247016412" />
+      <entry key="H2" value="1091.7643209215084" />
+      <entry key="H4" value="2046.2232639792362" />
+      <entry key="D1" value="10711.798946688692" />
+      <entry key="W1" value="19791.068590863746" />
     </decayedShown>
   </component>
   <component name="ProjectColorInfo">{
@@ -353,7 +328,15 @@
       <option name="project" value="LOCAL" />
       <updated>1782073608842</updated>
     </task>
-    <option name="localTasksCounter" value="7" />
+    <task id="LOCAL-00007" summary="queriesave">
+      <option name="closed" value="true" />
+      <created>1782673989333</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1782673989333</updated>
+    </task>
+    <option name="localTasksCounter" value="8" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -366,6 +349,7 @@
     <MESSAGE value="GoogleApi und so" />
     <MESSAGE value="setrz" />
     <MESSAGE value="rr" />
-    <option name="LAST_COMMIT_MESSAGE" value="rr" />
+    <MESSAGE value="queriesave" />
+    <option name="LAST_COMMIT_MESSAGE" value="queriesave" />
   </component>
 </project>

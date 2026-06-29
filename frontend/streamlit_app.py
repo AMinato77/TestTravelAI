@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import html
+import json
+import os
 import sys
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
+from typing import Any
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -15,9 +20,10 @@ load_dotenv(ROOT / ".env", override=True)
 from app.agents.request_agent import parse_travel_request
 from app.models.preference_source import PreferenceSource
 from app.models.travel_request import TravelRequest
-from app.orchestrator import build_travel_plan
+from app.orchestrator import TravelPlanResult, build_travel_plan, revise_travel_plan
 from app.rag.memory_retrieval import delete_user_memory_sources
 from app.rag.user_memory import create_user_profile, list_user_ids, load_user_profile
+from app.services.serialization import itinerary_to_dict, validation_to_dict
 from app.tools.gmail_tool import (
     GmailIntegrationError,
     build_gmail_preference_source,
@@ -28,22 +34,585 @@ from app.tools.gmail_tool import (
 from app.tools.openai_runtime import MissingLocalAIError, MissingOpenAIKeyError, ai_provider
 
 
-def _travel_request_fallback(**values) -> TravelRequest:
+APP_TITLE = "TravelAI"
+APP_SUBTITLE = "Agentischer Reiseplaner mit konkreten Suchqueries, Memory und interaktiver Anpassung"
+
+DEFAULT_USER_ID = "demo_user_1"
+DEFAULT_REQUEST = (
+    "Ich will 2 Tage nach Paris, typische franzoesische Kueche und Anime-Laeden, "
+    "aber kein Sport und keine Touristenfallen."
+)
+
+STYLE_CHOICES = [
+    ("Ausgewogen", "balanced"),
+    ("Entspannt", "relaxed"),
+    ("Abenteuer", "adventure"),
+    ("Luxus", "luxury"),
+    ("Guenstig", "budget"),
+]
+BUDGET_CHOICES = [("Niedrig", "low"), ("Mittel", "medium"), ("Hoch", "high")]
+DESTINATION_SCOPE_CHOICES = [("Stadt", "city"), ("Land", "country"), ("Region", "region"), ("Offen", "open")]
+INTEREST_TAG_CHOICES = [
+    ("Essen", "food"),
+    ("Streetfood", "street food"),
+    ("Anime", "anime"),
+    ("Gaming", "gaming"),
+    ("Kultur", "culture"),
+    ("Geschichte", "history"),
+    ("Lokale Orte", "local spots"),
+    ("Natur", "nature"),
+    ("Shopping", "shopping"),
+    ("Sport", "sport"),
+    ("Architektur", "architecture"),
+    ("Fotografie", "photography"),
+    ("Technik", "technology"),
+    ("Nightlife", "nightlife"),
+]
+AVOID_TAG_CHOICES = [
+    "Sport",
+    "Restaurants",
+    "Touristenfallen",
+    "Museen",
+    "Shopping",
+    "Clubs",
+    "Nightlife",
+    "Volle Orte",
+    "Stressiger Plan",
+]
+MAIN_VIEWS = ["KI", "Reiseplan", "Technik"]
+
+
+def main() -> None:
+    st.set_page_config(page_title=APP_TITLE, page_icon="AI", layout="wide", initial_sidebar_state="expanded")
+    _apply_styles()
+    _init_state()
+
+    current_profile = load_user_profile(st.session_state.user_id)
+    sidebar_state = _render_sidebar(current_profile)
+
+    _render_header()
+    pending_view = st.session_state.pop("pending_main_view", None)
+    if pending_view:
+        st.session_state.main_view = pending_view
+    selected_view = st.radio("Ansicht", MAIN_VIEWS, horizontal=True, key="main_view", label_visibility="collapsed")
+
+    result = st.session_state.get("last_result")
+    parsed_request = st.session_state.get("last_parsed_request")
+
+    if selected_view == "KI":
+        _render_ai_view(current_profile, sidebar_state, result)
+    elif selected_view == "Reiseplan":
+        _render_plan_view(result, parsed_request)
+    else:
+        _render_tech_view(result, parsed_request, sidebar_state, current_profile)
+
+
+def _render_header() -> None:
+    st.markdown(
+        f"""
+        <div class="app-header">
+          <div>
+            <div class="eyebrow">{APP_TITLE}</div>
+            <h1>Reiseplaner</h1>
+            <p>{APP_SUBTITLE}</p>
+          </div>
+          <div class="header-badges">
+            {_pill(ai_provider().upper(), "accent")}
+            {_pill(st.session_state.user_id, "muted")}
+            {_pill("Query Workflow", "success")}
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_sidebar(profile) -> dict[str, Any]:
+    st.sidebar.markdown(
+        f"<div class='sidebar-title'>Herzlich Willkommen</div>"
+        f"<div class='sidebar-user'>{html.escape(st.session_state.user_id)}</div>",
+        unsafe_allow_html=True,
+    )
+
+    user_ids = list_user_ids()
+    if not user_ids:
+        create_user_profile(DEFAULT_USER_ID)
+        user_ids = [DEFAULT_USER_ID]
+
+    if st.session_state.user_id not in user_ids:
+        st.session_state.user_id = user_ids[0]
+
+    selected_user = st.sidebar.selectbox(
+        "Gespeicherte Profile",
+        sorted(user_ids),
+        index=sorted(user_ids).index(st.session_state.user_id),
+        key="profile_select",
+    )
+    if selected_user != st.session_state.user_id:
+        st.session_state.user_id = selected_user
+        st.rerun()
+
+    with st.sidebar.expander("Neues Profil", expanded=False):
+        new_user_id = st.text_input("User ID", placeholder="z. B. tokyo_user")
+        if st.button("Profil anlegen", use_container_width=True):
+            cleaned = _safe_user_id(new_user_id)
+            if cleaned:
+                create_user_profile(cleaned)
+                st.session_state.user_id = cleaned
+                st.rerun()
+            st.warning("Bitte eine gueltige User ID eingeben.")
+
+    st.sidebar.divider()
+    st.sidebar.markdown("### Profil")
+    _sidebar_list("Praeferenznotizen", getattr(profile, "preference_notes", []))
+    _sidebar_list("Tags", getattr(profile, "interest_tags", []))
+    _sidebar_list("Meiden", getattr(profile, "avoid", []))
+    _sidebar_list("Ziele", getattr(profile, "past_destinations", []))
+
+    st.sidebar.divider()
+    st.sidebar.markdown("### Quellen")
+    uploaded_files = st.sidebar.file_uploader(
+        "Notizen / Chat-Exports",
+        type=["txt", "md", "json", "csv"],
+        accept_multiple_files=True,
+        key="source_uploads",
+    )
+    travel_ratings = st.sidebar.text_area(
+        "Reisebewertungen",
+        placeholder="Barcelona: 9/10, Essen war super.\nParis: 5/10, zu touristisch.",
+        height=96,
+        key="travel_ratings",
+    )
+
+    st.sidebar.divider()
+    st.sidebar.markdown("### Gmail")
+    creds_ok = gmail_credentials_available()
+    st.sidebar.caption(f"Credentials: {'ok' if creds_ok else 'fehlt'}")
+    with st.sidebar.expander("OAuth", expanded=False):
+        if not creds_ok:
+            credentials = st.file_uploader("OAuth Client JSON", type=["json"], key="gmail_credentials_upload")
+            if credentials and st.button("Credentials speichern", use_container_width=True):
+                try:
+                    save_gmail_credentials_file(credentials.getvalue())
+                    st.success("Credentials gespeichert.")
+                    st.rerun()
+                except GmailIntegrationError as exc:
+                    st.error(str(exc))
+
+        gmail_limit = st.number_input("Max. Mails", min_value=1, max_value=50, value=20, step=1)
+        gmail_days = st.number_input("Lookback Tage", min_value=1, max_value=3650, value=365, step=30)
+        if st.button("Gmail laden", disabled=not creds_ok, use_container_width=True):
+            try:
+                account_email = get_gmail_account_email(st.session_state.user_id)
+                sources, messages = build_gmail_preference_source(
+                    user_id=st.session_state.user_id,
+                    max_messages=int(gmail_limit),
+                    lookback_days=int(gmail_days),
+                )
+                st.session_state.gmail_account_email = account_email
+                st.session_state.gmail_sources = sources
+                st.session_state.gmail_messages = messages
+                st.success(f"{len(messages)} Mail(s), {len(sources)} Quelle(n)")
+                st.rerun()
+            except GmailIntegrationError as exc:
+                st.error(str(exc))
+        if st.button("Gmail-Memory loeschen", use_container_width=True):
+            deleted = delete_user_memory_sources(st.session_state.user_id, source_type="email_newsletter")
+            st.session_state.gmail_sources = []
+            st.session_state.gmail_messages = []
+            st.session_state.gmail_account_email = ""
+            st.success(f"{deleted} Gmail-Memory-Chunk(s) geloescht.")
+            st.rerun()
+
+    st.sidebar.divider()
+    st.sidebar.markdown("### Debug")
+    if st.sidebar.button("Letztes Ergebnis loeschen", use_container_width=True):
+        st.session_state.last_result = None
+        st.session_state.last_parsed_request = None
+        st.session_state.last_inputs = {}
+        st.session_state.plan_versions = []
+        st.rerun()
+
+    return {
+        "uploaded_files": uploaded_files or [],
+        "travel_ratings": travel_ratings,
+        "gmail_sources": st.session_state.get("gmail_sources", []),
+        "gmail_messages": st.session_state.get("gmail_messages", []),
+        "gmail_account_email": st.session_state.get("gmail_account_email", ""),
+    }
+
+
+def _render_ai_view(profile, sidebar_state: dict[str, Any], result: TravelPlanResult | None) -> None:
+    st.markdown("### Reisebriefing")
+    with st.form("travel_form", border=False, clear_on_submit=False):
+        request_text = st.text_area(
+            "Beschreibe deine Reise konkret",
+            value=st.session_state.last_inputs.get("request_text", DEFAULT_REQUEST),
+            placeholder=DEFAULT_REQUEST,
+            height=130,
+        )
+
+        col_a, col_b, col_c = st.columns([1.5, 0.8, 0.9])
+        with col_a:
+            destination = st.text_input("Reiseziel", value=st.session_state.last_inputs.get("destination", ""))
+        with col_b:
+            days = st.number_input("Tage", min_value=1, max_value=14, value=int(st.session_state.last_inputs.get("days", 3)))
+        with col_c:
+            budget = st.number_input(
+                "Budget",
+                min_value=0.0,
+                max_value=100_000.0,
+                value=float(st.session_state.last_inputs.get("budget", 600.0)),
+                step=50.0,
+            )
+
+        col_d, col_e, col_f = st.columns(3)
+        with col_d:
+            style_label = st.selectbox("Reisestil", [label for label, _ in STYLE_CHOICES])
+        with col_e:
+            budget_label = st.selectbox("Budgetpraeferenz", [label for label, _ in BUDGET_CHOICES], index=1)
+        with col_f:
+            scope_label = st.selectbox("Zielart", [label for label, _ in DESTINATION_SCOPE_CHOICES])
+
+        col_must, col_avoid = st.columns(2)
+        with col_must:
+            must_have_text = st.text_area(
+                "Muss enthalten sein",
+                value=st.session_state.last_inputs.get("must_have_text", ""),
+                placeholder="z. B. One Piece Shops, Formel-1-Orte, typische lokale Kueche",
+                height=95,
+            )
+        with col_avoid:
+            avoid_text = st.text_area(
+                "Vermeiden",
+                value=st.session_state.last_inputs.get("avoid_text", ""),
+                placeholder="z. B. Sport, Touristenfallen, Clubs, lange Warteschlangen",
+                height=95,
+            )
+
+        tag_labels = st.multiselect(
+            "Optionale Interessen-Tags",
+            [label for label, _ in INTEREST_TAG_CHOICES],
+            default=_labels_for_values(st.session_state.last_inputs.get("interest_tags", []), INTEREST_TAG_CHOICES),
+        )
+        avoid_labels = st.multiselect("Optionale Avoid-Tags", AVOID_TAG_CHOICES)
+        recommend_destination = st.toggle("Reiseziel empfehlen lassen", value=False)
+
+        submitted = st.form_submit_button("Reiseplan erstellen", type="primary", use_container_width=True)
+
+    if submitted:
+        _run_initial_plan(
+            profile=profile,
+            sidebar_state=sidebar_state,
+            request_text=request_text,
+            destination=destination,
+            days=int(days),
+            budget=float(budget),
+            travel_style=_value_for_label(style_label, STYLE_CHOICES),
+            budget_preference=_value_for_label(budget_label, BUDGET_CHOICES),
+            destination_scope=_value_for_label(scope_label, DESTINATION_SCOPE_CHOICES),
+            must_have_text=must_have_text,
+            avoid_text=avoid_text,
+            interest_tags=_values_for_labels(tag_labels, INTEREST_TAG_CHOICES),
+            avoid_tags=avoid_labels,
+            recommend_destination=recommend_destination,
+        )
+
+    if result:
+        st.markdown("### Letzter Stand")
+        _render_ai_summary(result)
+    else:
+        _render_empty_state(profile, sidebar_state)
+
+
+def _run_initial_plan(
+    profile,
+    sidebar_state: dict[str, Any],
+    request_text: str,
+    destination: str,
+    days: int,
+    budget: float,
+    travel_style: str,
+    budget_preference: str,
+    destination_scope: str,
+    must_have_text: str,
+    avoid_text: str,
+    interest_tags: list[str],
+    avoid_tags: list[str],
+    recommend_destination: bool,
+) -> None:
+    fallback = TravelRequest(
+        destination=destination,
+        destination_scope=destination_scope,
+        needs_destination_recommendation=recommend_destination,
+        duration_days=days,
+        budget=budget,
+        must_have=_parse_list(must_have_text),
+        avoid=[*_parse_list(avoid_text), *avoid_tags],
+        interest_tags=interest_tags,
+        query_hints=[],
+        travel_style=travel_style,
+    )
+    briefing = "\n".join(part for part in [request_text, f"Must-have: {must_have_text}", f"Vermeiden: {avoid_text}"] if part.strip())
     try:
-        return TravelRequest(**values)
-    except TypeError:
-        legacy_keys = {
-            "destination",
-            "destination_scope",
-            "needs_destination_recommendation",
-            "destination_reasoning",
-            "duration_days",
-            "budget",
-            "must_have",
-            "avoid",
-            "travel_style",
-        }
-        return TravelRequest(**{key: value for key, value in values.items() if key in legacy_keys})
+        parsed = parse_travel_request(briefing, fallback)
+        effective_must_have = _merge_unique(_parse_list(must_have_text), parsed.must_have)
+        effective_avoid = _merge_unique(_parse_list(avoid_text), avoid_tags, parsed.avoid)
+        effective_tags = _merge_unique(interest_tags, parsed.interest_tags)
+        effective_query_hints = _merge_unique(parsed.query_hints, [f"{parsed.destination} {item}" for item in effective_must_have if parsed.destination])
+        preference_sources = _build_preference_sources(
+            sidebar_state.get("uploaded_files") or [],
+            sidebar_state.get("travel_ratings") or "",
+            "",
+        )
+        preference_sources.extend(sidebar_state.get("gmail_sources") or [])
+
+        with st.spinner("Agenten-Workflow wird ausgefuehrt..."):
+            result = build_travel_plan(
+                user_id=st.session_state.user_id,
+                destination=parsed.destination,
+                days=parsed.duration_days,
+                budget=parsed.budget,
+                travel_style=parsed.travel_style,
+                budget_preference=budget_preference,
+                feedback=None,
+                preference_sources=preference_sources,
+                manual_avoid=effective_avoid,
+                destination_scope=parsed.destination_scope,
+                needs_destination_recommendation=parsed.needs_destination_recommendation,
+                must_have=effective_must_have,
+                interest_tags=effective_tags,
+                query_hints=effective_query_hints,
+            )
+    except (MissingOpenAIKeyError, MissingLocalAIError) as exc:
+        st.error(str(exc))
+        return
+    except Exception as exc:
+        st.error(f"Planung fehlgeschlagen: {exc}")
+        return
+
+    st.session_state.last_result = result
+    st.session_state.last_parsed_request = parsed
+    st.session_state.last_inputs = {
+        "request_text": request_text,
+        "destination": parsed.destination,
+        "days": parsed.duration_days,
+        "budget": parsed.budget,
+        "travel_style": parsed.travel_style,
+        "budget_preference": budget_preference,
+        "destination_scope": parsed.destination_scope,
+        "must_have_text": must_have_text,
+        "avoid_text": avoid_text,
+        "must_have": effective_must_have,
+        "avoid": effective_avoid,
+        "interest_tags": effective_tags,
+        "query_hints": effective_query_hints,
+    }
+    st.session_state.plan_versions = [{"version": 1, "label": "Erstplan", "feedback": ""}]
+    st.session_state.pending_main_view = "Reiseplan"
+    st.rerun()
+
+
+def _render_empty_state(profile, sidebar_state: dict[str, Any]) -> None:
+    col_1, col_2, col_3, col_4 = st.columns(4)
+    col_1.metric("Profil", getattr(profile, "user_id", st.session_state.user_id))
+    col_2.metric("Memory-Tags", len(getattr(profile, "interest_tags", [])))
+    col_3.metric("Quellen", len(sidebar_state.get("uploaded_files") or []) + len(sidebar_state.get("gmail_sources") or []))
+    col_4.metric("Provider", ai_provider())
+    st.markdown(
+        _info_panel(
+            "Noch kein Plan erzeugt",
+            "Beschreibe konkret, was du erleben willst. TravelAI erzeugt daraus Must-haves, Avoids und echte Google-Places-Suchqueries.",
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def _render_ai_summary(result: TravelPlanResult) -> None:
+    itinerary = result.itinerary
+    points = [
+        f"Ziel: {itinerary.destination}",
+        f"Tage: {len(itinerary.days)}",
+        f"Aktivitaeten: {sum(len(day.activities) for day in itinerary.days)}",
+        "Validierung ok" if result.validation.ok else f"{len(result.validation.issues)} Validierungshinweis(e)",
+    ]
+    if result.place_queries:
+        points.append(f"{len(result.place_queries)} konkrete Places-Queries")
+    st.markdown(_bullets_panel("Kurzfassung", points), unsafe_allow_html=True)
+
+
+def _render_plan_view(result: TravelPlanResult | None, parsed_request: TravelRequest | None) -> None:
+    st.markdown("### Reiseplan")
+    if not result or not parsed_request:
+        st.markdown(_info_panel("Noch kein Reiseplan vorhanden.", "Erstelle zuerst im KI-Tab einen Plan."), unsafe_allow_html=True)
+        return
+
+    summary = (result.explanation or {}).get("summary") or f"Plan fuer {result.itinerary.destination}."
+    st.markdown(_info_panel(f"Reise nach {result.itinerary.destination}", summary), unsafe_allow_html=True)
+    _render_wish_coverage(result.validation)
+    _render_itinerary(result)
+    _render_revision_panel(result, parsed_request)
+
+
+def _render_wish_coverage(validation) -> None:
+    semantic = _semantic_summary(validation)
+    st.markdown("#### Abdeckung deiner Wuensche")
+    col_1, col_2, col_3 = st.columns(3)
+    col_1.metric("Status", "ok" if semantic["ok"] else "pruefen")
+    col_2.metric("Offene Wuensche", len(semantic["missing"]))
+    col_3.metric("Avoid-Konflikte", len(semantic["avoid"]))
+    if semantic["missing"]:
+        st.warning("Offen: " + " | ".join(semantic["missing"]))
+    if semantic["avoid"]:
+        st.error("Konflikte: " + " | ".join(semantic["avoid"]))
+
+
+def _render_itinerary(result: TravelPlanResult) -> None:
+    for day in result.itinerary.days:
+        with st.expander(f"Tag {day.day}", expanded=day.day == 1):
+            for index, activity in enumerate(day.activities, start=1):
+                meta = []
+                if activity.duration_hours:
+                    meta.append(f"{activity.duration_hours:g} h")
+                if activity.cost:
+                    meta.append(_format_currency(activity.cost, result.itinerary.currency))
+                st.markdown(f"{index}. **{html.escape(activity.name)}**")
+                st.caption(f"{_category_label(activity.category)}" + (f" | {' | '.join(meta)}" if meta else ""))
+                if activity.description:
+                    st.caption(_compact_description(activity.description))
+            if day.notes:
+                st.markdown("**Hinweise**")
+                st.markdown(_bullet_list(day.notes))
+            st.write(f"Tagessumme: {_format_currency(day.total_cost, result.itinerary.currency)}")
+
+
+def _render_revision_panel(result: TravelPlanResult, parsed_request: TravelRequest) -> None:
+    st.divider()
+    st.markdown("### Plan wie im Reisebuero anpassen")
+    versions = st.session_state.get("plan_versions", [])
+    if versions:
+        st.caption(" · ".join(f"Version {item['version']}: {item['label']}" for item in versions[-5:]))
+
+    seed = st.session_state.pop("revision_seed", "")
+    feedback = st.text_area(
+        "Was soll geaendert werden?",
+        value=seed,
+        placeholder="z. B. Das Restaurant kenne ich schon, bitte ersetzen. Oder: Mehr Anime-Laeden. Oder: Tag 2 ist zu voll.",
+        height=92,
+        key="revision_feedback_input",
+    )
+    col_1, col_2, col_3 = st.columns(3)
+    with col_1:
+        if st.button("Restaurant ersetzen", use_container_width=True):
+            st.session_state.revision_seed = "Das Restaurant kenne ich schon, bitte durch eine aehnliche Alternative ersetzen."
+            st.rerun()
+    with col_2:
+        if st.button("Mehr davon", use_container_width=True):
+            st.session_state.revision_seed = "Bitte mehr davon einbauen, ohne den Plan zu voll zu machen."
+            st.rerun()
+    with col_3:
+        if st.button("Weniger stressig", use_container_width=True):
+            st.session_state.revision_seed = "Der Plan ist zu stressig. Bitte mache ihn entspannter."
+            st.rerun()
+
+    if st.button("Plan anpassen", type="primary", disabled=not feedback.strip(), use_container_width=True):
+        try:
+            with st.spinner("Revision Agent passt den Plan an..."):
+                revised = revise_travel_plan(
+                    previous_result=result,
+                    feedback=feedback,
+                    original_inputs={
+                        "destination": parsed_request.destination,
+                        "days": parsed_request.duration_days,
+                        "budget": parsed_request.budget,
+                        "must_have": parsed_request.must_have,
+                        "avoid": parsed_request.avoid,
+                        "interest_tags": parsed_request.interest_tags,
+                        "query_hints": parsed_request.query_hints,
+                        "travel_style": parsed_request.travel_style,
+                    },
+                )
+            st.session_state.last_result = revised
+            st.session_state.plan_versions.append(
+                {"version": len(st.session_state.plan_versions) + 1, "label": "Anpassung", "feedback": feedback}
+            )
+            st.success("Plan wurde angepasst.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Anpassung fehlgeschlagen: {exc}")
+
+
+def _render_tech_view(
+    result: TravelPlanResult | None,
+    parsed_request: TravelRequest | None,
+    sidebar_state: dict[str, Any],
+    profile,
+) -> None:
+    st.markdown("### Technik")
+    col_1, col_2, col_3 = st.columns(3)
+    col_1.metric("AI Provider", ai_provider())
+    col_2.metric("Profil", st.session_state.user_id)
+    col_3.metric("Versionen", len(st.session_state.get("plan_versions", [])))
+
+    payload = {
+        "environment": {
+            "AI_PROVIDER": os.getenv("AI_PROVIDER", ""),
+            "OPENAI_API_KEY": bool(os.getenv("OPENAI_API_KEY")),
+            "GOOGLE_PLACES_API_KEY": bool(os.getenv("GOOGLE_PLACES_API_KEY")),
+            "WEATHER_API_KEY": bool(os.getenv("WEATHER_API_KEY")),
+        },
+        "last_inputs": st.session_state.get("last_inputs", {}),
+        "parsed_request": _request_to_dict(parsed_request) if parsed_request else {},
+        "profile": _to_jsonable(profile),
+        "gmail_sources": [_source_to_dict(source) for source in sidebar_state.get("gmail_sources", [])],
+        "plan_versions": st.session_state.get("plan_versions", []),
+    }
+    if result:
+        payload["result"] = _result_to_dict(result)
+
+    st.download_button(
+        "JSON export",
+        data=json.dumps(payload, ensure_ascii=False, indent=2),
+        file_name="travelai_debug.json",
+        mime="application/json",
+        use_container_width=True,
+    )
+
+    with st.expander("Umgebung", expanded=True):
+        st.json(payload["environment"])
+    with st.expander("Parsed Request", expanded=True):
+        st.json(payload["parsed_request"])
+    if result:
+        with st.expander("Query Planning", expanded=True):
+            st.json(
+                {
+                    "summary": result.query_planning,
+                    "queries": [
+                        {
+                            "query": query.query,
+                            "reason": query.reason,
+                            "source": query.source,
+                            "must_have": query.must_have,
+                        }
+                        for query in result.place_queries
+                    ],
+                }
+            )
+        with st.expander("Workflow Steps", expanded=False):
+            for index, step in enumerate(result.workflow_steps, start=1):
+                st.write(f"{index}. {step}")
+        with st.expander("Validation", expanded=False):
+            st.json(validation_to_dict(result.validation))
+        with st.expander("Itinerary", expanded=False):
+            st.json(itinerary_to_dict(result.itinerary))
+        with st.expander("Activity Evaluation", expanded=False):
+            st.json(result.activity_evaluation)
+        with st.expander("Agentic / Quality", expanded=False):
+            st.json({"tool_workflow": result.agentic_tool_workflow, "quality_review": result.agentic_quality_review})
+        with st.expander("Revision", expanded=False):
+            st.json(result.revision or {})
+        with st.expander("Costs", expanded=False):
+            st.json(result.cost_report)
 
 
 def _build_preference_sources(uploaded_files, travel_ratings: str, feedback: str) -> list[PreferenceSource]:
@@ -51,424 +620,215 @@ def _build_preference_sources(uploaded_files, travel_ratings: str, feedback: str
     for uploaded_file in uploaded_files or []:
         raw = uploaded_file.getvalue()
         text = raw.decode("utf-8", errors="ignore")
-        sources.append(
-            PreferenceSource(
-                source_type="upload",
-                name=uploaded_file.name,
-                text=text,
-            )
-        )
+        sources.append(PreferenceSource(source_type="upload", name=uploaded_file.name, text=text))
     if travel_ratings.strip():
-        sources.append(
-            PreferenceSource(
-                source_type="travel_rating",
-                name="manual_travel_ratings",
-                text=travel_ratings,
-            )
-        )
+        sources.append(PreferenceSource(source_type="travel_rating", name="manual_travel_ratings", text=travel_ratings))
     if feedback.strip():
-        sources.append(
-            PreferenceSource(
-                source_type="feedback",
-                name="current_feedback",
-                text=feedback,
-            )
-        )
+        sources.append(PreferenceSource(source_type="feedback", name="current_feedback", text=feedback))
     return sources
 
 
-def _show_validation(label: str, validation) -> None:
-    st.markdown(f"### {label}")
-    error_count = getattr(validation, "error_count", None)
-    warning_count = getattr(validation, "warning_count", None)
-    if error_count is None:
-        error_count = sum(1 for issue in validation.issues if issue.severity == "error")
-    if warning_count is None:
-        warning_count = sum(1 for issue in validation.issues if issue.severity == "warning")
-    st.write(f"Errors: {error_count} | Warnings: {warning_count}")
-    if validation.ok:
-        st.success("Plan ist valide.")
-        if not validation.issues:
-            return
-    for issue in validation.issues:
-        prefix = f"Tag {issue.day or '-'}"
-        if issue.activity:
-            prefix += f" | {issue.activity}"
-        if issue.severity == "error":
-            st.error(f"{prefix}: {issue.issue_type} - {issue.message}")
-        else:
-            st.warning(f"{prefix}: {issue.issue_type} - {issue.message}")
+def _init_state() -> None:
+    st.session_state.setdefault("user_id", DEFAULT_USER_ID)
+    st.session_state.setdefault("last_result", None)
+    st.session_state.setdefault("last_parsed_request", None)
+    st.session_state.setdefault("last_inputs", {})
+    st.session_state.setdefault("plan_versions", [])
+    st.session_state.setdefault("main_view", "KI")
+    st.session_state.setdefault("gmail_sources", [])
+    st.session_state.setdefault("gmail_messages", [])
+    st.session_state.setdefault("gmail_account_email", "")
 
 
-def _show_items(items: list[str], empty_text: str = "Keine Daten erkannt.") -> None:
-    cleaned = [item for item in items if item and str(item).strip().lower() not in {"none", "unknown", "null", "n/a", "-"}]
-    if not cleaned:
-        st.caption(empty_text)
-        return
-    for item in cleaned:
-        st.write(f"- {item}")
-
-
-def _profile_value(profile, name: str, default):
-    value = getattr(profile, name, default)
-    return default if value is None else value
-
-
-def _profile_dict(profile) -> dict:
-    if hasattr(profile, "to_dict"):
-        return profile.to_dict()
-    return {
-        "user_id": _profile_value(profile, "user_id", "demo_user_1"),
-        "interest_tags": _profile_value(profile, "interest_tags", []),
-        "preference_notes": _profile_value(profile, "preference_notes", []),
-        "travel_style": _profile_value(profile, "travel_style", "balanced"),
-        "budget_preference": _profile_value(profile, "budget_preference", "medium"),
-        "avoid": _profile_value(profile, "avoid", []),
-        "preferred_day_structure": _profile_value(profile, "preferred_day_structure", "balanced"),
-        "past_destinations": _profile_value(profile, "past_destinations", []),
-        "feedback_history": _profile_value(profile, "feedback_history", []),
-        "source_notes": _profile_value(profile, "source_notes", []),
-        "uploaded_sources": _profile_value(profile, "uploaded_sources", []),
-    }
-
-
-def _show_sidebar_memory(profile, title: str = "Gespeichertes Memory", expanded: bool = False) -> None:
-    with st.expander(title, expanded=expanded):
-        st.write(f"Reisestil: {_profile_value(profile, 'travel_style', 'balanced')}")
-        st.write(f"Budgetpraeferenz: {_profile_value(profile, 'budget_preference', 'medium')}")
-        st.markdown("**Praeferenznotizen**")
-        _show_items(_profile_value(profile, "preference_notes", []))
-        st.markdown("**Bisherige Ziele**")
-        _show_items(_profile_value(profile, "past_destinations", []))
-        with st.expander("Chroma Memory Snapshot", expanded=False):
-            st.json(_profile_dict(profile))
-
-
-def _select_user_profile() -> str:
-    st.subheader("User")
-    user_ids = list_user_ids()
-    if not user_ids:
-        create_user_profile("demo_user_1")
-        user_ids = ["demo_user_1"]
-
-    if "selected_user_id" not in st.session_state:
-        st.session_state.selected_user_id = user_ids[0]
-
-    if st.session_state.selected_user_id not in user_ids:
-        st.session_state.selected_user_id = user_ids[0]
-
-    selected_user = st.selectbox(
-        "Vorhandene User",
-        user_ids,
-        index=user_ids.index(st.session_state.selected_user_id),
-        key="user_selectbox",
+def _apply_styles() -> None:
+    st.markdown(
+        """
+        <style>
+          :root {
+            --bg: #07111f;
+            --surface: #0e1b2c;
+            --surface-2: #13263d;
+            --border: #24415f;
+            --text: #edf4ff;
+            --muted: #bfd0e2;
+            --accent: #5da0ff;
+            --good: #57c58f;
+            --warn: #f0b85f;
+            --bad: #ef7b7b;
+          }
+          .stApp, [data-testid="stAppViewContainer"], .main, .main .block-container {
+            background: var(--bg);
+            color: var(--text);
+          }
+          .main .block-container { padding-top: 1.1rem; padding-bottom: 2rem; }
+          section[data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #0a1728 0%, #07111f 100%);
+            border-right: 1px solid rgba(255,255,255,0.06);
+          }
+          section[data-testid="stSidebar"] * { color: #d9e7fb; }
+          .app-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            align-items: flex-start;
+            padding: 1rem 1.1rem;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, #0d1c31 0%, #132947 55%, #173d67 100%);
+            border: 1px solid rgba(93,160,255,0.14);
+            border-radius: 12px;
+          }
+          .app-header h1 { margin: 0; font-size: 1.65rem; color: #f4fbfc; }
+          .app-header p { margin: 0.35rem 0 0 0; color: #b9cbe0; }
+          .eyebrow {
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-size: 0.72rem;
+            color: #8bc4ff;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+          }
+          .header-badges { display: flex; flex-wrap: wrap; gap: 0.35rem; justify-content: flex-end; }
+          .tag {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.6rem;
+            border-radius: 999px;
+            border: 1px solid transparent;
+            font-size: 0.76rem;
+            font-weight: 600;
+            white-space: nowrap;
+          }
+          .tag-muted { background: var(--surface-2); border-color: var(--border); color: #d6e3f5; }
+          .tag-accent { background: rgba(93,160,255,0.14); color: var(--accent); }
+          .tag-success { background: rgba(21,111,59,0.12); color: var(--good); }
+          .tag-warn { background: rgba(154,103,0,0.12); color: var(--warn); }
+          .tag-bad { background: rgba(163,34,34,0.12); color: var(--bad); }
+          .info-panel {
+            padding: 1rem;
+            background: linear-gradient(180deg, #112237 0%, #0c1828 100%);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+          }
+          .info-title { font-weight: 700; margin-bottom: 0.25rem; }
+          .info-body { color: var(--muted); }
+          .sidebar-title { font-size: 1.35rem; font-weight: 800; color: #d9e7fb; }
+          .sidebar-user { font-size: 1.2rem; font-weight: 700; margin-bottom: 0.75rem; }
+          div[data-testid="stMetric"] {
+            background: linear-gradient(180deg, #11243a 0%, #0c1727 100%);
+            border: 1px solid rgba(95,142,196,0.42);
+            border-radius: 12px;
+            padding: 0.8rem 0.9rem;
+          }
+          .stTextInput input, .stTextArea textarea, .stNumberInput input,
+          .stSelectbox div[data-baseweb="select"] > div,
+          .stMultiSelect div[data-baseweb="select"] > div {
+            background: #dce6f2;
+            border-color: #89a6c8;
+            color: #111827;
+          }
+          .stButton button, .stDownloadButton button {
+            border-radius: 10px;
+            font-weight: 600;
+            background: #335f9e;
+            color: #f7fbfc;
+            border: 1px solid rgba(93,160,255,0.2);
+          }
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
-    st.session_state.selected_user_id = selected_user
-
-    with st.expander("+ Neuen User erstellen", expanded=False):
-        new_user_id = st.text_input("Neue User ID", placeholder="z.B. tokyo_user")
-        if st.button("User erstellen", use_container_width=True):
-            cleaned_user_id = _clean_user_id(new_user_id)
-            if cleaned_user_id:
-                create_user_profile(cleaned_user_id)
-                st.session_state.selected_user_id = cleaned_user_id
-                st.success(f"User '{cleaned_user_id}' wurde erstellt.")
-                st.rerun()
-            else:
-                st.warning("Bitte eine gueltige User ID eingeben.")
-
-    return st.session_state.selected_user_id
 
 
-def _clean_user_id(value: str) -> str:
-    return "".join(char for char in value.strip() if char.isalnum() or char in ("-", "_"))
+def _sidebar_list(title: str, values: list[Any]) -> None:
+    with st.sidebar.expander(f"{title} ({len(values or [])})", expanded=False):
+        if values:
+            st.markdown(_render_tags([str(value) for value in values[:12]], "muted"), unsafe_allow_html=True)
+        else:
+            st.caption("Keine Daten.")
 
 
-def _show_request_summary(parsed_request: TravelRequest) -> None:
-    st.markdown("### Erkannte Reiseanfrage")
-    col_1, col_2, col_3, col_4 = st.columns(4)
-    col_1.metric("Ziel", parsed_request.destination)
-    col_2.metric("Tage", parsed_request.duration_days)
-    col_3.metric("Budget", f"{parsed_request.budget:g} EUR")
-    col_4.metric("Reisestil", parsed_request.travel_style)
-    st.markdown("**Konkrete Wuensche aus aktuellem Freitext**")
-    if parsed_request.must_have:
-        st.write(", ".join(parsed_request.must_have))
-    else:
-        st.write("Keine konkreten Wuensche erkannt. Query Planning nutzt Ziel, Memory und Fallback-Suche.")
-    if parsed_request.needs_destination_recommendation:
-        st.info(
-            f"Die Anfrage wurde als Ziel-Empfehlung erkannt "
-            f"(Scope: {parsed_request.destination_scope})."
-        )
-    if parsed_request.avoid:
-        st.markdown("**Abneigungen**")
-        st.write(", ".join(parsed_request.avoid))
-    with st.expander("Technische JSON-Ausgabe", expanded=False):
-        st.json(
-            {
-                "destination": parsed_request.destination,
-                "destination_scope": parsed_request.destination_scope,
-                "needs_destination_recommendation": parsed_request.needs_destination_recommendation,
-                "destination_reasoning": parsed_request.destination_reasoning,
-                "duration_days": parsed_request.duration_days,
-                "budget": parsed_request.budget,
-                "must_have": parsed_request.must_have,
-                "avoid": parsed_request.avoid,
-                "interest_tags": parsed_request.interest_tags,
-                "query_hints": parsed_request.query_hints,
-                "travel_style": parsed_request.travel_style,
-            }
-        )
+def _semantic_summary(validation) -> dict:
+    issues = getattr(validation, "issues", []) or []
+    missing = [issue.message for issue in issues if getattr(issue, "issue_type", "") == "must_have_gap"]
+    avoid = [
+        issue.message
+        for issue in issues
+        if getattr(issue, "issue_type", "") in {"semantic_avoid_conflict", "preference_conflict"}
+    ]
+    return {"ok": not missing and not avoid, "missing": missing, "avoid": avoid}
 
 
-def _show_profile_summary(profile) -> None:
-    st.markdown("### Profil")
-    st.write(f"**User:** {_profile_value(profile, 'user_id', 'demo_user_1')}")
-    st.write(f"**Reisestil:** {_profile_value(profile, 'travel_style', 'balanced')}")
-    st.write(f"**Budgetpraeferenz:** {_profile_value(profile, 'budget_preference', 'medium')}")
-    st.markdown("**Praeferenznotizen**")
-    _show_items(_profile_value(profile, "preference_notes", []))
-    st.markdown("**Tags fuer UI/Analyse**")
-    _show_items(_profile_value(profile, "interest_tags", []))
-    st.markdown("**Meiden**")
-    _show_items(_profile_value(profile, "avoid", []))
-    past_destinations = _profile_value(profile, "past_destinations", [])
-    if past_destinations:
-        st.markdown("**Bisherige Ziele**")
-        st.write(", ".join(past_destinations))
-    with st.expander("Profil als JSON", expanded=False):
-        st.json(_profile_dict(profile))
+def _source_to_dict(source: PreferenceSource) -> dict:
+    return {"source_type": source.source_type, "name": source.name, "text": source.text}
 
 
-def _show_weather_summary(weather: dict) -> None:
-    st.markdown("### Wetter")
-    st.write(weather.get("summary", "Keine Wetterzusammenfassung vorhanden."))
-    col_1, col_2 = st.columns(2)
-    col_1.metric("Temperatur", f"{weather.get('temperature_c', '?')} °C")
-    col_2.metric("Max. Regenchance", f"{weather.get('max_rain_chance', '?')}%")
-    if weather.get("rain_expected"):
-        st.warning("Regen erwartet. Indoor-Alternativen werden bevorzugt.")
-    else:
-        st.success("Kein relevanter Regen erwartet.")
-    with st.expander("Wetter als JSON", expanded=False):
-        st.json(weather)
+def _request_to_dict(request: TravelRequest | None) -> dict:
+    return asdict(request) if request else {}
 
 
-def _show_ai_explanation(explanation: dict) -> None:
-    st.markdown("## AI Explanation")
-    if explanation.get("summary"):
-        st.write(explanation["summary"])
-
-    col_1, col_2 = st.columns(2)
-    with col_1:
-        st.markdown("### Warum dieser Plan passt")
-        _show_items(explanation.get("preference_reasoning", []))
-        st.markdown("### Datenquellen")
-        _show_items(explanation.get("data_sources", []))
-    with col_2:
-        st.markdown("### Validierung")
-        st.write(explanation.get("validation_result") or "Keine Validierungserklaerung vorhanden.")
-        st.markdown("### Optimierung")
-        st.write(explanation.get("optimization_result") or "Keine Optimierungserklaerung vorhanden.")
-
-    caveats = explanation.get("caveats", [])
-    if caveats:
-        with st.expander("Hinweise"):
-            _show_items(caveats)
+def _result_to_dict(result: TravelPlanResult) -> dict:
+    data = asdict(result)
+    return _to_jsonable(data)
 
 
-def _show_agentic_quality_review(review: dict) -> None:
-    if not review:
-        return
-    st.markdown("## Agents SDK Quality Review")
-    if not review.get("enabled"):
-        st.caption(review.get("summary", "Agents SDK Review wurde nicht ausgefuehrt."))
-        return
-    st.write(review.get("summary", "Keine Zusammenfassung vorhanden."))
-    col_1, col_2 = st.columns(2)
-    with col_1:
-        st.markdown("### Budget")
-        st.write(review.get("budget_assessment", "Keine Budgetbewertung vorhanden."))
-    with col_2:
-        st.markdown("### Validierung")
-        st.write(review.get("validation_assessment", "Keine Validierungsbewertung vorhanden."))
-    improvements = review.get("improvements") or []
-    if improvements:
-        st.markdown("### Verbesserungsideen")
-        _show_items([str(item) for item in improvements])
-
-
-def _show_agentic_tool_workflow(workflow: dict) -> None:
-    st.markdown("## Agentic Tool Workflow")
-    if not workflow:
-        st.caption("Keine Tool-Workflow-Daten vorhanden.")
-        return
-    if not workflow.get("enabled"):
-        st.caption(workflow.get("summary", "Tool Workflow Agent wurde nicht ausgefuehrt."))
-    else:
-        st.write(workflow.get("summary", "Tool Workflow Agent wurde ausgefuehrt."))
-    tool_calls = workflow.get("tool_calls") or []
-    if tool_calls:
-        st.markdown("### Interne Tool Calls")
-        st.dataframe(tool_calls, use_container_width=True, hide_index=True)
-    guidance = workflow.get("planning_guidance") or []
-    if guidance:
-        st.markdown("### Tool-Empfehlung")
-        _show_structured_items(guidance)
-    tool_decision = workflow.get("tool_decision")
-    if tool_decision:
-        st.markdown("### Tool-Entscheidung")
-        st.write(tool_decision)
-    risks = workflow.get("risks") or []
-    if risks:
-        st.markdown("### Risiken")
-        _show_structured_items(risks)
-    coverage = workflow.get("wish_coverage") or {}
-    if coverage:
-        st.markdown("### Wunschabdeckung")
-        st.json(coverage)
-    if not workflow.get("enabled"):
-        return
-
-
-def _show_structured_items(value) -> None:
+def _to_jsonable(value: Any) -> Any:
+    if is_dataclass(value):
+        return _to_jsonable(asdict(value))
     if isinstance(value, dict):
-        for key, item in value.items():
-            if isinstance(item, (list, dict)):
-                st.markdown(f"**{key}**")
-                st.json(item)
-            elif str(item).strip():
-                st.write(f"- **{key}:** {item}")
-        return
+        return {str(key): _to_jsonable(item) for key, item in value.items()}
     if isinstance(value, list):
-        for item in value:
-            if isinstance(item, dict):
-                _show_structured_items(item)
-            elif isinstance(item, list):
-                _show_structured_items(item)
-            elif str(item).strip():
-                st.write(f"- {item}")
-        return
-    if str(value).strip():
-        st.write(f"- {value}")
+        return [_to_jsonable(item) for item in value]
+    if isinstance(value, tuple):
+        return [_to_jsonable(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if hasattr(value, "to_dict"):
+        return _to_jsonable(value.to_dict())
+    return str(value)
 
 
-def _show_cost_report(cost_report: dict) -> None:
-    st.markdown("## Cost Tracking")
-    if not cost_report:
-        st.caption("Keine Kostendaten vorhanden.")
-        return
-    st.metric("Geschaetzte Tool-Kosten", f"{cost_report.get('estimated_total_usd', 0):g} USD")
-    col_1, col_2 = st.columns(2)
-    with col_1:
-        st.markdown("### Nach Provider")
-        st.json(cost_report.get("by_provider", {}))
-    with col_2:
-        st.markdown("### Nach Tool")
-        st.json(cost_report.get("by_tool", {}))
-    traces = cost_report.get("traces") or []
-    if traces:
-        with st.expander("Cost Trace Details", expanded=False):
-            st.dataframe(traces, use_container_width=True, hide_index=True)
-    notes = cost_report.get("notes") or []
-    if notes:
-        with st.expander("Kostenhinweise", expanded=False):
-            _show_items([str(note) for note in notes])
+def _parse_list(text: str) -> list[str]:
+    if not str(text).strip():
+        return []
+    chunks = []
+    for line in str(text).replace(";", "\n").splitlines():
+        chunks.extend(part.strip() for part in line.split(","))
+    return [chunk for chunk in chunks if chunk]
 
 
-def _show_activity_evaluation(evaluation: dict) -> None:
-    removed = evaluation.get("removed") or []
-    if not removed:
-        st.success("Activity Evaluation Agent hat keine schwachen Kandidaten entfernt.")
-        return
-    with st.expander("Vom Activity Evaluation Agent entfernte Kandidaten", expanded=False):
-        st.dataframe(
-            [
-                {
-                    "name": item.get("name"),
-                    "category": item.get("category"),
-                    "source": item.get("source"),
-                    "score": item.get("score"),
-                    "reason": item.get("reason"),
-                }
-                for item in removed
-            ],
-            use_container_width=True,
-            hide_index=True,
-        )
+def _merge_unique(*groups: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for value in group or []:
+            cleaned = " ".join(str(value).strip().split())
+            key = cleaned.lower()
+            if not cleaned or key in seen:
+                continue
+            seen.add(key)
+            result.append(cleaned)
+    return result
 
 
-def _show_memory_context(memory_context) -> None:
-    st.markdown("### RAG Memory Context")
-    if not memory_context:
-        st.caption("Keine passenden Memory-Chunks aus ChromaDB abgerufen.")
-        return
-    with st.expander("Aus ChromaDB abgerufene User-Memory-Chunks", expanded=False):
-        for index, source in enumerate(memory_context, start=1):
-            st.markdown(f"**{index}. {source.name}** ({source.source_type})")
-            facts = _profile_memory_facts(source.text) if source.source_type == "profile_snapshot" else []
-            if facts:
-                st.caption("Aus ChromaDB retrieved und fuer die Planung beruecksichtigt:")
-                for fact in facts:
-                    st.write(f"- {fact}")
-            else:
-                st.write(_memory_preview(source.text))
+def _labels_for_values(values: list[str], choices: list[tuple[str, str]]) -> list[str]:
+    wanted = {str(value).strip().lower() for value in values or []}
+    return [label for label, internal in choices if internal.lower() in wanted]
 
 
-def _profile_memory_facts(text: str) -> list[str]:
-    labels = {
-        "Interest tags": "Tags",
-        "Preference notes": "Praeferenznotizen",
-        "Avoid": "Meiden",
-        "Travel style": "Reisestil",
-        "Budget preference": "Budgetpraeferenz",
-        "Past destinations": "Bisherige Ziele",
-        "Feedback history": "Feedback",
-        "Source notes": "Quellnotizen",
-    }
-    facts: list[str] = []
-    for raw_line in text.splitlines():
-        if ":" not in raw_line:
-            continue
-        key, value = raw_line.split(":", 1)
-        label = labels.get(key.strip())
-        value = value.strip()
-        if label and value and value.lower() != "none":
-            facts.append(f"{label}: {value}")
-    return facts
+def _values_for_labels(labels: list[str], choices: list[tuple[str, str]]) -> list[str]:
+    wanted = {str(label).strip().lower() for label in labels or []}
+    return [internal for label, internal in choices if label.lower() in wanted]
 
 
-def _memory_preview(text: str) -> str:
-    preview = text[:500].strip()
-    if len(text) > 500:
-        preview += "..."
-    return preview
+def _value_for_label(label: str, choices: list[tuple[str, str]]) -> str:
+    for item_label, value in choices:
+        if item_label == label:
+            return value
+    return choices[0][1]
 
 
-def _show_itinerary(itinerary, title: str) -> None:
-    st.markdown(f"## {title}")
-    for day in itinerary.days:
-        with st.container(border=True):
-            st.markdown(f"### Tag {day.day}")
-            for activity in day.activities:
-                st.markdown(
-                    f"**{activity.name}**  \n"
-                    f"{_category_label(activity.category)} | {activity.duration_hours:g}h | "
-                    f"{activity.cost:g} {itinerary.currency} | "
-                    f"{'Indoor' if activity.indoor else 'Outdoor'}"
-                )
-                meta = _activity_meta(activity.description)
-                if meta:
-                    st.caption(" | ".join(meta))
-                links = _activity_links(activity.description)
-                if links:
-                    with st.expander("Details und Links", expanded=False):
-                        for label, url in links:
-                            st.markdown(f"- [{label}]({url})")
-            if day.notes:
-                st.info(_clean_note_text(" ".join(day.notes)))
-            st.write(f"Tagessumme: {day.total_cost:g} {itinerary.currency}")
+def _safe_user_id(value: str) -> str:
+    return "".join(char for char in str(value).strip() if char.isalnum() or char in ("-", "_"))
 
 
 def _category_label(category: str) -> str:
@@ -479,7 +839,6 @@ def _category_label(category: str) -> str:
         "culture": "Kultur",
         "history": "Geschichte",
         "architecture": "Architektur",
-        "photography": "Fotografie",
         "shopping": "Shopping",
         "sport": "Sport",
         "gaming": "Gaming",
@@ -491,373 +850,42 @@ def _category_label(category: str) -> str:
     return labels.get(str(category).strip().lower(), str(category).replace("_", " ").title())
 
 
-def _activity_meta(description: str) -> list[str]:
-    if not description:
-        return []
-    fields = []
-    address = _description_field(description, "Address")
-    rating = _description_field(description, "Rating")
-    reviews = _description_field(description, "Reviews")
-    if address:
-        fields.append(f"Adresse: {address}")
-    if rating:
-        fields.append(f"Bewertung: {rating}")
-    if reviews:
-        fields.append(f"Reviews: {reviews}")
-    return fields
+def _compact_description(description: str, limit: int = 260) -> str:
+    text = " ".join(str(description).split())
+    return text if len(text) <= limit else text[: limit - 1] + "..."
 
 
-def _activity_links(description: str) -> list[tuple[str, str]]:
-    links: list[tuple[str, str]] = []
-    website = _description_field(description, "Website")
-    maps_url = _description_field(description, "Google Maps")
-    if website:
-        links.append(("Website", website))
-    if maps_url:
-        links.append(("Google Maps", maps_url))
-    return links
+def _format_currency(value: float, currency: str = "EUR") -> str:
+    symbol = {"EUR": "EUR", "USD": "USD"}.get(str(currency).upper(), str(currency))
+    return f"{value:,.0f} {symbol}".replace(",", ".")
 
 
-def _description_field(description: str, label: str) -> str:
-    marker = f"{label}:"
-    for part in str(description).split("|"):
-        cleaned = part.strip()
-        if cleaned.lower().startswith(marker.lower()):
-            return cleaned.split(":", 1)[1].strip()
-    return ""
+def _pill(text: str, kind: str = "muted") -> str:
+    return f"<span class='tag tag-{kind}'>{html.escape(str(text))}</span>"
 
 
-def _clean_note_text(text: str) -> str:
-    replacements = {
-        "Rain-aware planning": "Regenbewusste Planung",
-        "Indoor activities were prioritized.": "Indoor-Aktivitaeten wurden priorisiert.",
-        "Relaxed pacing: limited number of main activities.": "Entspanntes Tempo: begrenzte Anzahl grosser Aktivitaeten.",
-    }
-    result = str(text)
-    for source, target in replacements.items():
-        result = result.replace(source, target)
-    return result
+def _render_tags(values: list[Any], kind: str = "muted") -> str:
+    return "".join(_pill(str(value), kind) for value in values if str(value).strip())
 
 
-st.set_page_config(page_title="Adaptive AI Travel Agent", page_icon="AI", layout="wide")
-
-st.title("Adaptive AI Travel Agent")
-st.caption(f"AI Provider: {ai_provider()}")
-
-with st.sidebar:
-    st.header("Nutzerprofil")
-    user_id = _select_user_profile()
-    travel_style = "balanced"
-    budget_preference = "medium"
-    feedback = ""
-
-    memory = load_user_profile(user_id)
-    memory_panel = st.empty()
-    with memory_panel.container():
-        _show_sidebar_memory(memory)
-
-st.subheader("Preference Learning")
-upload_col, rating_col = st.columns(2)
-with upload_col:
-    uploaded_files = st.file_uploader(
-        "Chat-Exports oder Notizen hochladen",
-        type=["txt", "md", "json", "csv"],
-        accept_multiple_files=True,
-    )
-with rating_col:
-    travel_ratings = st.text_area(
-        "Reisebewertungen",
-        placeholder="Barcelona: 9/10, Essen war super.\nParis: 5/10, zu touristisch.",
-        height=140,
+def _info_panel(title: str, body: str) -> str:
+    return (
+        "<div class='info-panel'>"
+        f"<div class='info-title'>{html.escape(title)}</div>"
+        f"<div class='info-body'>{html.escape(body)}</div>"
+        "</div>"
     )
 
-with st.expander("Optional: Gmail-Newsletter als Preference-Signale verbinden", expanded=False):
-    st.caption(
-        "Gmail wird lokal per OAuth verbunden. Es werden keine vollstaendigen Mail-Bodies gespeichert, "
-        "sondern nur Newsletter-Metadaten, Snippets und schwache Interessenssignale."
-    )
 
-    creds_ok = gmail_credentials_available()
-    st.write(f"Credentials vorhanden: {'Ja' if creds_ok else 'Nein'}")
+def _bullet_list(values: list[Any]) -> str:
+    items = [str(value).strip() for value in values if str(value).strip()]
+    return "\n".join(f"- {html.escape(item)}" for item in items)
 
-    if not creds_ok:
-        gmail_credentials_upload = st.file_uploader(
-            "Google OAuth Client JSON hochladen",
-            type=["json"],
-            key="gmail_credentials_upload",
-            help="Google Cloud OAuth Client fuer Desktop App mit Scope gmail.readonly.",
-        )
-        if gmail_credentials_upload and st.button("Gmail OAuth-Datei speichern"):
-            try:
-                save_gmail_credentials_file(gmail_credentials_upload.getvalue())
-                st.success("Gmail OAuth-Credentials lokal gespeichert.")
-                st.rerun()
-            except GmailIntegrationError as exc:
-                st.error(str(exc))
 
-    gmail_col_1, gmail_col_2 = st.columns(2)
-    with gmail_col_1:
-        gmail_limit = st.number_input("Max. Mails", min_value=1, max_value=50, value=20, step=1)
-    with gmail_col_2:
-        gmail_lookback_days = st.number_input("Zeitraum in Tagen", min_value=1, max_value=3650, value=365, step=30)
+def _bullets_panel(title: str, values: list[Any]) -> str:
+    bullets = "".join(f"<li>{html.escape(str(item))}</li>" for item in values if str(item).strip())
+    return f"<div class='info-panel'><div class='info-title'>{html.escape(title)}</div><ul>{bullets}</ul></div>"
 
-    if st.button("Gmail verbinden / laden", disabled=not creds_ok, use_container_width=True):
-        try:
-            account_email = get_gmail_account_email(user_id)
-            sources, messages = build_gmail_preference_source(
-                user_id=user_id,
-                max_messages=int(gmail_limit),
-                lookback_days=int(gmail_lookback_days),
-            )
-            st.session_state["gmail_account_email"] = account_email
-            st.session_state["gmail_preference_sources"] = sources
-            st.session_state["gmail_newsletter_messages"] = messages
-            if not messages:
-                st.session_state["gmail_preference_sources"] = []
-                st.session_state["gmail_newsletter_messages"] = []
-                st.info("Keine passenden Gmail-Newsletter im gewaehlten Zeitraum gefunden.")
-            else:
-                kept_count = sum(1 for message in messages if message.keep_as_preference)
-                st.success(f"{len(messages)} Gmail-Newsletter geprüft, {kept_count} als Preference-Signal übernommen.")
-        except GmailIntegrationError as exc:
-            st.error(str(exc))
 
-    gmail_sources = st.session_state.get("gmail_preference_sources", [])
-    gmail_messages = st.session_state.get("gmail_newsletter_messages", [])
-    gmail_account_email = st.session_state.get("gmail_account_email", "")
-    if gmail_account_email:
-        st.write(f"Verbundenes Gmail-Konto: {gmail_account_email}")
-    if gmail_messages:
-        st.markdown("**Gefundene Newsletter-Mails**")
-        kept_gmail_interest_tags = sorted(
-            {
-                interest
-                for message in gmail_messages
-                if message.keep_as_preference
-                for interest in message.inferred_interest_tags
-            }
-        )
-        kept_budget_signals = sorted(
-            {
-                message.budget_signal
-                for message in gmail_messages
-                if message.keep_as_preference and message.budget_signal and message.budget_signal != "unknown"
-            }
-        )
-        kept_style_signals = sorted(
-            {
-                message.travel_style_signal
-                for message in gmail_messages
-                if message.keep_as_preference and message.travel_style_signal and message.travel_style_signal != "unknown"
-            }
-        )
-        summary_cols = st.columns(3)
-        summary_cols[0].write("**Aus Gmail erkannte Tags:** " + (", ".join(kept_gmail_interest_tags) or "Keine"))
-        summary_cols[1].write("**Budget-Signale:** " + (", ".join(kept_budget_signals) or "Keine"))
-        summary_cols[2].write("**Reisestil-Signale:** " + (", ".join(kept_style_signals) or "Keine"))
-        st.dataframe(
-            [
-                {
-                    "Sender": message.sender,
-                    "Subject": message.subject,
-                    "Date": message.date,
-                    "Labels": ", ".join(message.labels),
-                    "Relevanz": message.travel_relevance_score,
-                    "Signal": message.signal_strength,
-                    "Keep": "Ja" if message.keep_as_preference else "Nein",
-                    "Interest Tags": ", ".join(message.inferred_interest_tags),
-                    "Grund/Zusammenfassung": message.preference_summary or message.ignore_reason,
-                    "Snippet": message.snippet,
-                }
-                for message in gmail_messages
-            ],
-            use_container_width=True,
-            hide_index=True,
-        )
-    elif gmail_account_email:
-        st.info("Fuer dieses Gmail-Konto sind aktuell keine Newsletter-Signale in der Sitzung geladen.")
-    if gmail_sources:
-        st.markdown("**Gmail PreferenceSource fuer diesen Run**")
-        for source in gmail_sources:
-            st.write(f"- {source.name} ({source.source_type}, {len(source.text)} Zeichen)")
-        with st.expander("Gmail-Signaltext anzeigen", expanded=False):
-            st.text(gmail_sources[0].text)
-    elif gmail_messages:
-        st.info("Gmail-Mails wurden geladen, aber keine Mail war stark genug als Reisepräferenz-Signal.")
-    remove_col_1, remove_col_2 = st.columns(2)
-    with remove_col_1:
-        remove_session = st.button(
-            "Gmail-Import aus Sitzung entfernen",
-            disabled=not (gmail_sources or gmail_messages or gmail_account_email),
-            use_container_width=True,
-        )
-    with remove_col_2:
-        remove_chroma = st.button("Gmail-Memory aus Chroma loeschen", use_container_width=True)
-    if gmail_sources or gmail_messages or gmail_account_email:
-        if remove_session:
-            st.session_state["gmail_preference_sources"] = []
-            st.session_state["gmail_newsletter_messages"] = []
-            st.session_state["gmail_account_email"] = ""
-            st.rerun()
-    if remove_chroma:
-        deleted = delete_user_memory_sources(user_id, source_type="email_newsletter")
-        st.session_state["gmail_preference_sources"] = []
-        st.session_state["gmail_newsletter_messages"] = []
-        st.session_state["gmail_account_email"] = ""
-        st.success(f"{deleted} gespeicherte Gmail-Memory-Chunk(s) aus Chroma geloescht.")
-        st.rerun()
-
-st.subheader("Reiseparameter")
-request_text = st.text_area(
-    "Freie Reiseanfrage",
-    value="Ich will 4 Tage nach Barcelona, Budget 700 Euro, ich mag Food, Gaming, Anime und lokale Spots und will keinen stressigen Plan.",
-)
-
-generate = st.button("Reiseplan erstellen", type="primary")
-
-if generate:
-    try:
-        preference_sources = _build_preference_sources(uploaded_files, travel_ratings, feedback)
-        gmail_sources = st.session_state.get("gmail_preference_sources", [])
-        preference_sources.extend(gmail_sources)
-        if gmail_sources:
-            st.success(f"{len(gmail_sources)} Gmail-Newsletter-Quelle(n) ins Preference Learning uebernommen.")
-        parsed_request = parse_travel_request(
-            request_text,
-            _travel_request_fallback(
-                destination="",
-                destination_scope="open",
-                duration_days=3,
-                budget=600,
-                must_have=[],
-                avoid=[],
-                interest_tags=[],
-                query_hints=[],
-                travel_style=travel_style,
-            ),
-        )
-        with st.spinner("Agenten-Workflow wird ausgefuehrt..."):
-            result = build_travel_plan(
-                user_id=user_id,
-                destination=parsed_request.destination,
-                days=parsed_request.duration_days,
-                budget=parsed_request.budget,
-                travel_style=parsed_request.travel_style,
-                budget_preference=budget_preference,
-                feedback=feedback or None,
-                preference_sources=preference_sources,
-                manual_avoid=parsed_request.avoid,
-                destination_scope=parsed_request.destination_scope,
-                needs_destination_recommendation=parsed_request.needs_destination_recommendation,
-                must_have=parsed_request.must_have,
-                interest_tags=parsed_request.interest_tags,
-                query_hints=parsed_request.query_hints,
-            )
-    except (MissingOpenAIKeyError, MissingLocalAIError) as exc:
-        st.error(str(exc))
-        st.stop()
-
-    with memory_panel.container():
-        _show_sidebar_memory(result.profile, title="Aktuelles Memory nach diesem Lauf", expanded=True)
-
-    _show_request_summary(parsed_request)
-
-    st.markdown("### Agent Workflow")
-    for step in result.workflow_steps:
-        st.write(f"- {step}")
-
-    if result.place_queries:
-        with st.expander("Query Planning: Google-Places-Suchanfragen", expanded=False):
-            st.dataframe(
-                [
-                    {
-                        "query": query.query,
-                        "reason": query.reason,
-                        "source": query.source,
-                        "must_have": ", ".join(query.must_have),
-                    }
-                    for query in result.place_queries
-                ],
-                use_container_width=True,
-                hide_index=True,
-            )
-
-    profile_col, weather_col, validation_col = st.columns(3)
-    with profile_col:
-        _show_profile_summary(result.profile)
-        _show_memory_context(result.memory_context)
-    with weather_col:
-        _show_weather_summary(result.weather)
-    with validation_col:
-        st.write("Optimiert:", "Ja" if result.optimized else "Nein")
-        _show_validation("Finale Validation", result.validation)
-
-    if result.optimized:
-        st.markdown("## Optimization Loop")
-        before_col, after_col = st.columns(2)
-        with before_col:
-            _show_validation("Vor Optimierung", result.initial_validation)
-        with after_col:
-            _show_validation("Nach Optimierung", result.validation)
-
-    st.markdown("## Gefundene Aktivitaeten")
-    _show_activity_evaluation(result.activity_evaluation)
-    st.dataframe(
-        [
-            {
-                "name": activity.name,
-                "category": activity.category,
-                "cost": activity.cost,
-                "duration_h": activity.duration_hours,
-                "indoor": activity.indoor,
-                "source": activity.source,
-            }
-            for activity in result.activities
-        ],
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    if result.optimized:
-        with st.expander("Erster Plan vor Optimierung", expanded=False):
-            _show_itinerary(result.initial_itinerary, "Initialer Reiseplan")
-
-    _show_ai_explanation(result.explanation)
-    _show_agentic_tool_workflow(result.agentic_tool_workflow)
-    _show_agentic_quality_review(result.agentic_quality_review)
-    _show_cost_report(result.cost_report)
-
-    itinerary_title = "Finaler Reiseplan" if result.validation.ok else "Planentwurf mit offenen Problemen"
-    _show_itinerary(result.itinerary, itinerary_title)
-
-    if not result.validation.ok:
-        st.warning(
-            "Der Plan ist noch nicht final, weil die finale Validierung offene Fehler enthaelt. "
-            "Er wird deshalb nicht als fertiges Travel Package ausgegeben."
-        )
-    else:
-        st.markdown("## Final Travel Package")
-        package_col, todo_col = st.columns(2)
-        with package_col:
-            st.markdown("### Budgetuebersicht")
-            st.metric("Gesamtkosten", f"{result.itinerary.total_cost:g} {result.itinerary.currency}")
-            st.metric("Budget", f"{parsed_request.budget:g} {result.itinerary.currency}")
-            st.markdown("### Warum der Plan passt")
-            _show_items(
-                _profile_value(result.profile, "preference_notes", [])
-                or _profile_value(result.profile, "interest_tags", []),
-                "Keine Praeferenzen erkannt.",
-            )
-        with todo_col:
-            st.markdown("### Packliste")
-            pack_items = ["bequeme Schuhe", "Powerbank", "Reisedokumente"]
-            if result.weather.get("rain_expected"):
-                pack_items.append("Regenjacke")
-            for item in pack_items:
-                st.write(f"- {item}")
-            st.markdown("### To-do vor der Reise")
-            for item in ["API-Daten/Verfuegbarkeit pruefen", "Tickets reservieren", "Route offline speichern"]:
-                st.write(f"- {item}")
-
-else:
-    st.info("Gib Reiseparameter ein und erstelle den ersten Plan.")
+if __name__ == "__main__":
+    main()

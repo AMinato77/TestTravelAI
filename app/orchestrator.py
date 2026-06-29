@@ -13,6 +13,7 @@ from app.agents.explanation_agent import explain_travel_plan
 from app.agents.planning_agent import plan_itinerary
 from app.agents.preference_agent import extract_preferences
 from app.agents.query_planning_agent import PlaceQuery, plan_place_queries
+from app.agents.revision_agent import interpret_revision_feedback
 from app.models.activity import Activity
 from app.models.itinerary import Itinerary, ValidationResult
 from app.models.preference_source import PreferenceSource
@@ -50,6 +51,7 @@ class TravelPlanResult:
     cost_report: dict
     place_queries: list[PlaceQuery]
     query_planning: dict
+    revision: dict | None = None
 
 
 def build_travel_plan(
@@ -280,6 +282,139 @@ def build_travel_plan(
     )
 
 
+def revise_travel_plan(
+    previous_result: TravelPlanResult,
+    feedback: str,
+    original_inputs: dict,
+) -> TravelPlanResult:
+    load_dotenv()
+    reset_openai_usage_records()
+    itinerary = deepcopy(previous_result.itinerary)
+    profile = deepcopy(previous_result.profile)
+
+    must_have = _merge_unique(
+        original_inputs.get("must_have") or [],
+        original_inputs.get("query_hints") or [],
+    )
+    avoid = _merge_unique(profile.avoid, original_inputs.get("avoid") or [])
+    revision = interpret_revision_feedback(
+        itinerary=itinerary,
+        feedback=feedback,
+        original_request=original_inputs,
+        must_have=must_have,
+        avoid=avoid,
+    )
+    revision["feedback"] = feedback
+    avoid = _merge_unique(avoid, revision.get("avoid_additions") or [])
+    must_have = _merge_unique(must_have, revision.get("must_have_additions") or [])
+    query_hints = _merge_unique(
+        original_inputs.get("query_hints") or [],
+        revision.get("query_hints") or [],
+        [feedback],
+        must_have,
+    )
+    profile.avoid = avoid
+
+    workflow_steps = [
+        *previous_result.workflow_steps,
+        f"User feedback for revision: {feedback}",
+        f"Revision Agent classified feedback as {revision.get('intent')}: {revision.get('reasoning')}",
+    ]
+
+    new_queries = [
+        PlaceQuery(query=query, reason="Revision feedback query.", source="revision_agent", must_have=must_have)
+        for query in query_hints
+    ]
+    new_activities: list[Activity] = []
+    places_metadata = {"query_count": 0, "cache_hits": 0, "queries": []}
+    if new_queries:
+        try:
+            new_activities, places_metadata = search_places_with_metadata(
+                destination=itinerary.destination,
+                queries=new_queries,
+                avoid=avoid,
+            )
+            workflow_steps.append(f"Revision search returned {len(new_activities)} candidate(s).")
+        except Exception as exc:
+            workflow_steps.append(f"Revision search failed and used existing candidates only: {exc}")
+
+    activities = _deduplicate_activities([*new_activities, *previous_result.activities])
+    change_note = _apply_revision_to_itinerary(itinerary, activities, revision, avoid)
+    if change_note:
+        workflow_steps.append(change_note)
+    else:
+        workflow_steps.append("Revision kept the existing itinerary because no targeted replacement was available.")
+    cleanup_notes = _replace_revision_avoid_conflicts(itinerary, activities, avoid, revision)
+    workflow_steps.extend(cleanup_notes)
+
+    budget = float(original_inputs.get("budget") or itinerary.total_cost or 0)
+    constraints = {
+        "destination": itinerary.destination,
+        "must_have": must_have,
+        "query_hints": query_hints,
+        "avoid": avoid,
+        "revision": revision,
+    }
+    validation = validate_itinerary(itinerary, budget, previous_result.weather, profile, constraints=constraints)
+    workflow_steps.append(f"Validation after revision found {len(validation.issues)} issue(s).")
+    explanation = explain_travel_plan(
+        itinerary=itinerary,
+        profile=profile,
+        weather=previous_result.weather,
+        activities=activities,
+        validation=validation,
+        optimized=True,
+        budget=budget,
+    )
+    explanation["optimization_result"] = f"Plan angepasst: {revision.get('revision_instruction') or feedback}"
+
+    tool_traces = [
+        trace_to_dict(
+            google_places_trace(
+                query_count=int(places_metadata.get("query_count") or 0),
+                cache_hits=int(places_metadata.get("cache_hits") or 0),
+            )
+        )
+    ]
+    for record in openai_usage_records():
+        tool_traces.append(
+            trace_to_dict(
+                openai_llm_trace(
+                    name=record.get("name") or "openai_llm_call",
+                    model=record.get("model") or "gpt-5-nano",
+                    input_tokens=int(record.get("input_tokens") or 0),
+                    output_tokens=int(record.get("output_tokens") or 0),
+                )
+            )
+        )
+
+    return TravelPlanResult(
+        profile=profile,
+        activities=activities,
+        weather=previous_result.weather,
+        itinerary=itinerary,
+        validation=validation,
+        initial_itinerary=previous_result.itinerary,
+        initial_validation=previous_result.validation,
+        optimized=True,
+        loaded_memory=previous_result.loaded_memory,
+        workflow_steps=workflow_steps,
+        explanation=explanation,
+        activity_evaluation=previous_result.activity_evaluation,
+        memory_context=previous_result.memory_context,
+        agentic_quality_review=previous_result.agentic_quality_review,
+        agentic_tool_workflow=previous_result.agentic_tool_workflow,
+        cost_report=estimate_tool_cost_report(tool_traces),
+        place_queries=[*previous_result.place_queries, *new_queries],
+        query_planning={
+            "enabled": True,
+            "summary": "Revision Agent produced targeted follow-up queries.",
+            "revision_places_metadata": places_metadata,
+        },
+        revision=revision,
+    )
+
+
 def _deduplicate_activities(activities: list[Activity]) -> list[Activity]:
     seen: set[str] = set()
     unique: list[Activity] = []
@@ -290,6 +425,212 @@ def _deduplicate_activities(activities: list[Activity]) -> list[Activity]:
         seen.add(key)
         unique.append(activity)
     return unique
+
+
+def _apply_revision_to_itinerary(
+    itinerary: Itinerary,
+    activities: list[Activity],
+    revision: dict,
+    avoid: list[str],
+) -> str:
+    intent = str(revision.get("intent") or "")
+    target_terms = _merge_unique(
+        [str(revision.get("target_activity") or "")],
+        revision.get("avoid_additions") or [],
+        [str(revision.get("feedback") or "")],
+    )
+    target_day = revision.get("target_day")
+    used = {activity.name.strip().lower() for day in itinerary.days for activity in day.activities}
+
+    if intent == "reduce_intensity":
+        days = [day for day in itinerary.days if not target_day or day.day == target_day]
+        if not days and itinerary.days:
+            days = [max(itinerary.days, key=lambda item: len(item.activities))]
+        for day in days[:1]:
+            if len(day.activities) <= 1:
+                continue
+            removed = day.activities.pop()
+            day.notes.append(f"Removed {removed.name} after revision feedback to make the day less packed.")
+            return f"Removed {removed.name} from day {day.day} to reduce intensity."
+        return ""
+
+    if intent != "reduce_intensity" and target_terms:
+        target = _find_itinerary_activity(itinerary, target_terms, target_day)
+        if target:
+            day, index, activity = target
+            replacement = _find_replacement_activity(activity, activities, used, avoid, revision)
+            if not replacement:
+                day.activities.pop(index)
+                day.notes.append(f"Removed {activity.name} after revision feedback; no unused replacement was available.")
+                _remove_note_mentions(day, [activity.name, *(revision.get("avoid_additions") or [])])
+                return f"Removed {activity.name} from day {day.day}; no replacement was available."
+            day.activities[index] = replacement
+            _remove_note_mentions(day, [activity.name, *(revision.get("avoid_additions") or [])])
+            day.notes.append(f"Added {replacement.name} as replacement after revision feedback.")
+            return f"Replaced {activity.name} with {replacement.name} on day {day.day}."
+
+    if intent in {"replace_activity", "general_revision", "change_budget_level"}:
+        for day in itinerary.days:
+            for index, activity in enumerate(list(day.activities)):
+                if not _activity_conflicts_with_avoid(activity, avoid):
+                    continue
+                replacement = _find_replacement_activity(activity, activities, used, avoid, revision)
+                if not replacement:
+                    day.activities.pop(index)
+                    day.notes.append(f"Removed {activity.name} after revision feedback; no unused replacement was available.")
+                    _remove_note_mentions(day, [activity.name, *(revision.get("avoid_additions") or [])])
+                    return f"Removed {activity.name} from day {day.day}; no replacement was available."
+                day.activities[index] = replacement
+                _remove_note_mentions(day, [activity.name, *(revision.get("avoid_additions") or [])])
+                day.notes.append(f"Added {replacement.name} as replacement after revision feedback.")
+                return f"Replaced {activity.name} with {replacement.name} on day {day.day}."
+
+    if intent == "add_more_similar":
+        candidate = _first_unused_activity(activities, used, avoid)
+        if not candidate or not itinerary.days:
+            return ""
+        day = min(itinerary.days, key=lambda item: (item.total_duration_hours, len(item.activities)))
+        if len(day.activities) >= 4:
+            removed = day.activities.pop()
+            day.notes.append(f"Removed {removed.name} to make room for a requested similar activity.")
+        day.activities.append(candidate)
+        day.notes.append(f"Added {candidate.name} after revision feedback.")
+        return f"Added {candidate.name} to day {day.day}."
+
+    return ""
+
+
+def _find_replacement_activity(
+    original: Activity,
+    activities: list[Activity],
+    used: set[str],
+    avoid: list[str],
+    revision: dict | None = None,
+) -> Activity | None:
+    preferred_categories = _preferred_replacement_categories(original, revision or {})
+    for activity in activities:
+        key = activity.name.strip().lower()
+        if key in used or key == original.name.strip().lower():
+            continue
+        if activity.category not in preferred_categories:
+            continue
+        if _activity_conflicts_with_avoid(activity, avoid):
+            continue
+        return activity
+    return _first_unused_activity(activities, used, avoid)
+
+
+def _first_unused_activity(activities: list[Activity], used: set[str], avoid: list[str]) -> Activity | None:
+    for activity in activities:
+        key = activity.name.strip().lower()
+        if key in used:
+            continue
+        if _activity_conflicts_with_avoid(activity, avoid):
+            continue
+        return activity
+    return None
+
+
+def _replace_revision_avoid_conflicts(
+    itinerary: Itinerary,
+    activities: list[Activity],
+    avoid: list[str],
+    revision: dict,
+) -> list[str]:
+    notes: list[str] = []
+    used = {activity.name.strip().lower() for day in itinerary.days for activity in day.activities}
+    for day in itinerary.days:
+        repaired: list[Activity] = []
+        for activity in day.activities:
+            if not _activity_conflicts_with_avoid(activity, avoid):
+                repaired.append(activity)
+                continue
+            replacement = _find_replacement_activity(activity, activities, used, avoid, revision)
+            if replacement:
+                repaired.append(replacement)
+                used.add(replacement.name.strip().lower())
+                _remove_note_mentions(day, [activity.name, *(revision.get("avoid_additions") or [])])
+                day.notes.append(f"Added {replacement.name} as replacement because of revision avoid constraints.")
+                notes.append(f"Revision cleanup replaced {activity.name} with {replacement.name} on day {day.day}.")
+            else:
+                _remove_note_mentions(day, [activity.name, *(revision.get("avoid_additions") or [])])
+                day.notes.append(f"Removed {activity.name} because it conflicts with revision avoid constraints.")
+                notes.append(f"Revision cleanup removed {activity.name} from day {day.day}.")
+        day.activities = repaired
+    return notes
+
+
+def _remove_note_mentions(day, terms: list[str]) -> None:
+    cleaned_terms = [str(term).strip().lower() for term in terms if str(term).strip()]
+    if not cleaned_terms:
+        return
+    filtered: list[str] = []
+    for note in day.notes:
+        note_lower = str(note).lower()
+        if any(term and term in note_lower for term in cleaned_terms):
+            continue
+        filtered.append(note)
+    day.notes = filtered
+
+
+def _find_itinerary_activity(
+    itinerary: Itinerary,
+    target_terms: list[str],
+    target_day: int | None,
+) -> tuple | None:
+    candidates: list[tuple[float, Any, int, Activity]] = []
+    for day in itinerary.days:
+        if target_day and day.day != target_day:
+            continue
+        for index, activity in enumerate(day.activities):
+            score = max((_name_match_score(activity.name, term) for term in target_terms), default=0.0)
+            if score >= 0.45:
+                candidates.append((score, day, index, activity))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    _score, day, index, activity = candidates[0]
+    return day, index, activity
+
+
+def _name_match_score(activity_name: str, term: str) -> float:
+    name_tokens = _match_tokens(activity_name)
+    term_tokens = _match_tokens(term)
+    if not name_tokens or not term_tokens:
+        return 0.0
+    if " ".join(name_tokens) in " ".join(term_tokens) or " ".join(term_tokens) in " ".join(name_tokens):
+        return 1.0
+    overlap = set(name_tokens) & set(term_tokens)
+    return len(overlap) / max(1, min(len(name_tokens), len(term_tokens)))
+
+
+def _match_tokens(text: str) -> list[str]:
+    import re
+
+    stop_words = {"the", "and", "und", "oder", "ich", "kenne", "schon", "ersetze", "ersetz", "mal", "mit", "einem", "anderen"}
+    return [
+        token
+        for token in re.findall(r"[a-z0-9]+", str(text).lower())
+        if len(token) > 2 and token not in stop_words
+    ]
+
+
+def _preferred_replacement_categories(original: Activity, revision: dict) -> set[str]:
+    text = " ".join(
+        [
+            str(revision.get("feedback") or ""),
+            " ".join(revision.get("must_have_additions") or []),
+            " ".join(revision.get("query_hints") or []),
+            str(revision.get("revision_instruction") or ""),
+        ]
+    ).lower()
+    if any(term in text for term in ["natur", "nature", "park", "garden", "tea garden", "viewpoint", "outdoor"]):
+        return {"nature", "culture"} if original.category == "culture" else {"nature"}
+    if any(term in text for term in ["restaurant", "essen", "food", "kueche", "küche"]):
+        return {"food"}
+    if any(term in text for term in ["anime", "shop", "shopping", "store"]):
+        return {"shopping", "anime"}
+    return {original.category}
 
 
 def _merge_unique(*groups: list[str]) -> list[str]:

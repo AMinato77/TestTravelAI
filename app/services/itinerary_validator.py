@@ -162,16 +162,22 @@ def _weather_for_day(weather: dict, day_number: int) -> dict | None:
 
 def _activity_conflicts_with_avoid(activity, avoid: list[str]) -> bool:
     haystack = f"{activity.name} {activity.category} {activity.description}".lower()
-    avoid_text = " ".join(avoid).lower()
-    if any(term in avoid_text for term in ["food", "restaurant", "cafe"]):
+    avoid_terms = {_normalize_avoid_term(term) for term in avoid}
+    avoid_terms.discard("")
+
+    if avoid_terms & {"food", "foods", "essen", "restaurant", "restaurants", "cafe", "cafes", "café", "cafés"}:
         return activity.category == "food" or any(
             term in haystack for term in ["restaurant", "food", "cafe", "café", "creperie", "crêperie"]
         )
-    if any(term in avoid_text for term in ["museum", "museums"]):
+    if avoid_terms & {"museum", "museums", "museen"}:
         return "museum" in haystack or activity.category == "museum"
-    if any(term in avoid_text for term in ["nightlife", "club"]):
+    if avoid_terms & {"nightlife", "club", "clubs", "party"}:
         return activity.category == "nightlife" or any(term in haystack for term in ["club", "nightlife", "bar"])
-    return any(term and term in haystack for term in avoid)
+    return any(term and term in haystack for term in avoid_terms)
+
+
+def _normalize_avoid_term(value: str) -> str:
+    return " ".join(str(value).strip().lower().split())
 
 
 def _clean_terms(values: list[str]) -> list[str]:
@@ -224,4 +230,3 @@ def _content_tokens(text: str) -> list[str]:
     }
     tokens = re.findall(r"[a-z0-9äöüß]+", text.lower())
     return [token for token in tokens if len(token) > 2 and token not in stop_words]
-
