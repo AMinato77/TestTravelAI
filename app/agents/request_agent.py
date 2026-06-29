@@ -39,6 +39,8 @@ def parse_travel_request(text: str, fallback: TravelRequest) -> TravelRequest:
                     "must_have contains concrete free-form wishes exactly as the user means them, "
                     "for example merchandise shops, local food markets, quiet neighborhoods, "
                     "architecture walks, specific events, or niche experiences. "
+                    "If the user connects wishes with and/additionally/also/zusätzlich/und, keep each distinct "
+                    "positive wish as must_have. Do not downgrade a concrete wish to interest_tags only. "
                     "avoid contains concrete dislikes and hard exclusions. "
                     "Normalize must_have, avoid, interest_tags and query_hints into concise, "
                     "search-friendly English phrases unless a proper noun must stay unchanged. "
@@ -82,6 +84,7 @@ def _request_from_data(data: dict, raw_text: str, fallback: TravelRequest) -> Tr
     must_have = _merge_unique(parsed_must_have or _fallback_must_have(raw_text))
     avoid = _clean_avoid_terms(_merge_unique(parsed_avoid or _fallback_avoid(raw_text), fallback.avoid))
     query_hints = _merge_unique(_as_list(data.get("query_hints")), must_have)
+    must_have = _merge_unique(must_have, _distinct_tag_query_requirements(data.get("interest_tags"), query_hints, must_have))
     return TravelRequest(
         destination=destination,
         destination_scope=scope,
@@ -256,6 +259,32 @@ def _clean_tags(value) -> list[str]:
     return _merge_unique(_as_list(value))
 
 
+def _distinct_tag_query_requirements(tags, query_hints: list[str], must_have: list[str]) -> list[str]:
+    promoted: list[str] = []
+    existing = " ".join(must_have).lower()
+    for tag in _clean_tags(tags):
+        tag_key = tag.lower()
+        if tag_key and tag_key in existing:
+            continue
+        for hint in query_hints:
+            hint_lower = hint.lower()
+            if tag_key and tag_key in hint_lower and not _overlaps_existing_requirement(hint, must_have):
+                promoted.append(hint)
+                break
+    return promoted
+
+
+def _overlaps_existing_requirement(candidate: str, must_have: list[str]) -> bool:
+    candidate_tokens = set(_content_tokens(candidate))
+    if not candidate_tokens:
+        return False
+    for requirement in must_have:
+        requirement_tokens = set(_content_tokens(requirement))
+        if requirement_tokens and len(candidate_tokens & requirement_tokens) / max(1, len(candidate_tokens)) >= 0.4:
+            return True
+    return False
+
+
 def _clean_avoid_terms(values) -> list[str]:
     cleaned_values: list[str] = []
     for value in _as_list(values):
@@ -282,3 +311,29 @@ def _merge_unique(*groups: list[str]) -> list[str]:
             seen.add(key)
             result.append(cleaned)
     return result
+
+
+def _content_tokens(text: str) -> list[str]:
+    return [
+        token
+        for token in re.findall(r"[a-z0-9Ã¤Ã¶Ã¼ÃŸ]+", str(text).lower())
+        if len(token) > 2
+        and token
+        not in {
+            "the",
+            "and",
+            "for",
+            "with",
+            "from",
+            "und",
+            "oder",
+            "mit",
+            "von",
+            "fuer",
+            "fÃ¼r",
+            "places",
+            "things",
+            "trip",
+            "travel",
+        }
+    ]

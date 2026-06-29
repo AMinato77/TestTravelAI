@@ -139,11 +139,47 @@ def _wish_coverage(activities: list[Activity], wishes: list[str]) -> dict:
 
 def _matches_wish(activity: Activity, wish: str) -> bool:
     text = f"{activity.name} {activity.category} {activity.description}".lower()
-    tokens = [token for token in wish.lower().replace("-", " ").split() if len(token) > 2]
+    tokens = _content_tokens(wish)
     if not tokens:
         return False
     matches = sum(1 for token in tokens if token in text)
-    return matches >= (1 if len(tokens) == 1 else max(2, round(len(tokens) * 0.55)))
+    threshold = 1 if len(tokens) == 1 else max(2, round(len(tokens) * 0.65))
+    return matches >= threshold
+
+
+def _content_tokens(text: str) -> list[str]:
+    import re
+
+    stop_words = {
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "und",
+        "oder",
+        "mit",
+        "von",
+        "fuer",
+        "fÃ¼r",
+        "in",
+        "near",
+        "nach",
+        "city",
+        "country",
+        "places",
+        "things",
+        "trip",
+        "travel",
+        "tour",
+        "discover",
+        "explore",
+    }
+    return [
+        token
+        for token in re.findall(r"[a-z0-9Ã¤Ã¶Ã¼ÃŸ]+", str(text).lower())
+        if len(token) > 2 and token not in stop_words
+    ]
 
 
 def _fallback_guidance(wish_coverage: dict) -> list[str]:

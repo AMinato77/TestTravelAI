@@ -83,4 +83,8 @@ def destination_matches_text(destination: str, text: str) -> bool:
 def _clean_destination(destination: str) -> str:
     value = re.sub(r"\s+", " ", str(destination or "")).strip()
     value = value.strip(".,;:!?")
+    if "," in value:
+        city, _rest = value.split(",", 1)
+        if city.strip():
+            value = city.strip()
     return value

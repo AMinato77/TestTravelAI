@@ -200,6 +200,9 @@ def build_travel_plan(
 
     itinerary = plan_itinerary(request.destination, request.duration_days, request.budget, activities, weather, profile, constraints=constraints)
     workflow_steps.append("Planning Agent generated the first itinerary.")
+    coverage_notes = _repair_must_have_coverage(itinerary, activities, request.must_have)
+    if coverage_notes:
+        workflow_steps.append(f"Coverage guard adjusted the first itinerary: {'; '.join(coverage_notes)}")
     repair_notes = _enforce_hard_activity_constraints(itinerary, profile.avoid)
     if repair_notes:
         workflow_steps.append(f"Hard constraint guard repaired the first itinerary: {'; '.join(repair_notes)}")
@@ -215,10 +218,13 @@ def build_travel_plan(
             break
         previous_signature = _validation_signature(validation)
         itinerary = optimize_itinerary(itinerary, activities, request.budget, weather, profile, constraints=constraints)
+        coverage_notes = _repair_must_have_coverage(itinerary, activities, request.must_have)
         repair_notes = _enforce_hard_activity_constraints(itinerary, profile.avoid)
         validation = validate_itinerary(itinerary, request.budget, weather, profile, constraints=constraints)
         optimized = True
         workflow_steps.append(f"Optimization Agent adjusted the itinerary and validation ran again (attempt {attempt}).")
+        if coverage_notes:
+            workflow_steps.append(f"Coverage guard repaired optimizer output: {'; '.join(coverage_notes)}")
         if repair_notes:
             workflow_steps.append(f"Hard constraint guard repaired optimizer output: {'; '.join(repair_notes)}")
         if _validation_signature(validation) == previous_signature:
@@ -292,10 +298,7 @@ def revise_travel_plan(
     itinerary = deepcopy(previous_result.itinerary)
     profile = deepcopy(previous_result.profile)
 
-    must_have = _merge_unique(
-        original_inputs.get("must_have") or [],
-        original_inputs.get("query_hints") or [],
-    )
+    must_have = _merge_unique(original_inputs.get("must_have") or [])
     avoid = _merge_unique(profile.avoid, original_inputs.get("avoid") or [])
     revision = interpret_revision_feedback(
         itinerary=itinerary,
@@ -305,14 +308,10 @@ def revise_travel_plan(
         avoid=avoid,
     )
     revision["feedback"] = feedback
+    revision = _augment_revision_replacement_context(itinerary, revision)
     avoid = _merge_unique(avoid, revision.get("avoid_additions") or [])
     must_have = _merge_unique(must_have, revision.get("must_have_additions") or [])
-    query_hints = _merge_unique(
-        original_inputs.get("query_hints") or [],
-        revision.get("query_hints") or [],
-        [feedback],
-        must_have,
-    )
+    query_hints = _merge_unique(revision.get("query_hints") or [], [feedback])
     profile.avoid = avoid
 
     workflow_steps = [
@@ -320,11 +319,10 @@ def revise_travel_plan(
         f"User feedback for revision: {feedback}",
         f"Revision Agent classified feedback as {revision.get('intent')}: {revision.get('reasoning')}",
     ]
+    if revision.get("replacement_requirements"):
+        workflow_steps.append(f"Replacement requirements: {', '.join(revision.get('replacement_requirements') or [])}")
 
-    new_queries = [
-        PlaceQuery(query=query, reason="Revision feedback query.", source="revision_agent", must_have=must_have)
-        for query in query_hints
-    ]
+    new_queries = _select_revision_queries(query_hints, must_have, itinerary.destination)
     new_activities: list[Activity] = []
     places_metadata = {"query_count": 0, "cache_hits": 0, "queries": []}
     if new_queries:
@@ -427,6 +425,70 @@ def _deduplicate_activities(activities: list[Activity]) -> list[Activity]:
     return unique
 
 
+def _select_revision_queries(query_hints: list[str], must_have: list[str], destination: str) -> list[PlaceQuery]:
+    max_queries = _configured_int("TRAVELAI_MAX_REVISION_QUERIES", 3, minimum=1, maximum=8)
+    selected: list[PlaceQuery] = []
+    seen: set[str] = set()
+    for query in query_hints:
+        cleaned = " ".join(str(query).strip().split())
+        if not cleaned:
+            continue
+        if destination and destination.lower() not in cleaned.lower():
+            cleaned = f"{cleaned} {destination}"
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(
+            PlaceQuery(
+                query=cleaned,
+                reason="Revision feedback query.",
+                source="revision_agent",
+                must_have=_matched_must_have_for_query(cleaned, must_have),
+            )
+        )
+        if len(selected) >= max_queries:
+            break
+    return selected
+
+
+def _matched_must_have_for_query(query: str, must_have: list[str]) -> list[str]:
+    matched = [wish for wish in must_have if _text_matches_requirement(query.lower(), wish)]
+    return matched or must_have[:1]
+
+
+def _configured_int(name: str, fallback: int, minimum: int, maximum: int) -> int:
+    import os
+
+    try:
+        value = int(os.getenv(name, str(fallback)))
+    except (TypeError, ValueError):
+        value = fallback
+    return max(minimum, min(value, maximum))
+
+
+def _augment_revision_replacement_context(itinerary: Itinerary, revision: dict) -> dict:
+    if str(revision.get("intent") or "") != "replace_activity":
+        return revision
+    target_terms = _merge_unique(
+        [str(revision.get("target_activity") or "")],
+        revision.get("avoid_additions") or [],
+        [str(revision.get("feedback") or "")],
+    )
+    target = _find_itinerary_activity(itinerary, target_terms, revision.get("target_day"))
+    if not target:
+        return revision
+    _day, _index, activity = target
+    feedback = str(revision.get("feedback") or "")
+    requirements = _merge_unique(revision.get("replacement_requirements") or [], [feedback])
+    queries = _merge_unique(revision.get("query_hints") or [], [_clean_revision_search_text(feedback, activity)])
+    revision["target_activity"] = activity.name
+    revision["replacement_requirements"] = requirements
+    revision["query_hints"] = queries
+    revision["avoid_additions"] = _merge_unique(revision.get("avoid_additions") or [], [activity.name])
+    return revision
+
+
 def _apply_revision_to_itinerary(
     itinerary: Itinerary,
     activities: list[Activity],
@@ -485,8 +547,8 @@ def _apply_revision_to_itinerary(
                 day.notes.append(f"Added {replacement.name} as replacement after revision feedback.")
                 return f"Replaced {activity.name} with {replacement.name} on day {day.day}."
 
-    if intent == "add_more_similar":
-        candidate = _first_unused_activity(activities, used, avoid)
+    if intent == "add_more_similar" or (intent == "general_revision" and _revision_requests_addition(revision)):
+        candidate = _find_activity_for_revision_feedback(activities, used, avoid, revision)
         if not candidate or not itinerary.days:
             return ""
         day = min(itinerary.days, key=lambda item: (item.total_duration_hours, len(item.activities)))
@@ -507,17 +569,133 @@ def _find_replacement_activity(
     avoid: list[str],
     revision: dict | None = None,
 ) -> Activity | None:
-    preferred_categories = _preferred_replacement_categories(original, revision or {})
+    revision = revision or {}
+    desired_tokens = set(_desired_revision_tokens(revision, original))
+    allow_old_type_fallback = not desired_tokens or _revision_requests_similar_fallback(revision)
+    candidates: list[tuple[float, Activity]] = []
     for activity in activities:
         key = activity.name.strip().lower()
         if key in used or key == original.name.strip().lower():
             continue
-        if activity.category not in preferred_categories:
+        if _activity_conflicts_with_avoid(activity, avoid):
+            continue
+        score = _replacement_score(original, activity, revision, desired_tokens, allow_old_type_fallback)
+        if score > 0:
+            candidates.append((score, activity))
+    if candidates:
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return candidates[0][1]
+    if allow_old_type_fallback:
+        return _first_unused_activity(activities, used, avoid)
+    return None
+
+
+def _replacement_score(
+    original: Activity,
+    candidate: Activity,
+    revision: dict,
+    desired_tokens: set[str],
+    allow_old_type_fallback: bool,
+) -> float:
+    candidate_text = _activity_search_text(candidate)
+    candidate_tokens = set(_match_tokens(candidate_text))
+    desired_overlap = desired_tokens & candidate_tokens
+    if desired_tokens:
+        return float(len(desired_overlap) * 5)
+
+    score = 0.0
+    if allow_old_type_fallback and candidate.category == original.category:
+        score += 2.0
+    return score
+
+
+def _find_activity_for_revision_feedback(
+    activities: list[Activity],
+    used: set[str],
+    avoid: list[str],
+    revision: dict,
+) -> Activity | None:
+    desired_tokens = set(_desired_revision_tokens(revision, None))
+    scored: list[tuple[float, Activity]] = []
+    for activity in activities:
+        key = activity.name.strip().lower()
+        if key in used:
             continue
         if _activity_conflicts_with_avoid(activity, avoid):
             continue
-        return activity
-    return _first_unused_activity(activities, used, avoid)
+        candidate_tokens = set(_match_tokens(_activity_search_text(activity)))
+        score = len(desired_tokens & candidate_tokens) * 4.0
+        if not desired_tokens:
+            score = 1.0
+        if score > 0:
+            scored.append((score, activity))
+    if not scored:
+        return _first_unused_activity(activities, used, avoid)
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored[0][1]
+
+
+def _desired_revision_tokens(revision: dict, original: Activity | None) -> list[str]:
+    text = " ".join(
+        [
+            str(revision.get("feedback") or ""),
+            " ".join(revision.get("replacement_requirements") or []),
+            " ".join(revision.get("must_have_additions") or []),
+            " ".join(revision.get("query_hints") or []),
+            str(revision.get("revision_instruction") or ""),
+        ]
+    )
+    tokens = _match_tokens(text)
+    if original is None:
+        return tokens
+    original_tokens = set(_match_tokens(f"{original.name} {original.category}"))
+    return [token for token in tokens if token not in original_tokens]
+
+
+def _revision_requests_addition(revision: dict) -> bool:
+    text = str(revision.get("feedback") or "").lower()
+    return any(marker in text for marker in ["hinzuf", "add ", "another", "weitere", "noch eine", "mehr davon", "more"])
+
+
+def _revision_requests_similar_fallback(revision: dict) -> bool:
+    text = str(revision.get("feedback") or "").lower()
+    return any(marker in text for marker in ["alternative", "similar", "aehnlich", "aequivalent", "ersatz"]) and not _revision_requests_addition(revision)
+
+
+def _clean_revision_search_text(feedback: str, original: Activity) -> str:
+    import re
+
+    cleaned = " ".join(str(feedback or "").strip().split())
+    for token in re.findall(r"[A-Za-z0-9]+", original.name):
+        if len(token) > 2:
+            cleaned = re.sub(rf"\b{re.escape(token)}\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"\b(kenne|kenn|schon|war|ich|das|die|der|den|dem|beim|bei|statt|anstatt|stattdessen|instead|alternative|ersetze|gib|mir|bitte|dazu)\b",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return " ".join(cleaned.split())
+
+
+def _activity_search_text(activity: Activity) -> str:
+    return f"{activity.name} {activity.category} {_clean_activity_description_for_prompt(activity.description)}".lower()
+
+
+def _clean_activity_description_for_prompt(description: str) -> str:
+    kept: list[str] = []
+    blocked_labels = {"matched query", "matched must-have", "google maps", "website"}
+    for part in str(description or "").split("|"):
+        cleaned = " ".join(part.strip().split())
+        if not cleaned:
+            continue
+        label = cleaned.split(":", 1)[0].strip().lower() if ":" in cleaned else ""
+        if label in blocked_labels:
+            continue
+        if cleaned.lower().startswith(("http://", "https://")):
+            continue
+        kept.append(cleaned)
+    return " | ".join(kept)[:500]
 
 
 def _first_unused_activity(activities: list[Activity], used: set[str], avoid: list[str]) -> Activity | None:
@@ -607,30 +785,51 @@ def _name_match_score(activity_name: str, term: str) -> float:
 def _match_tokens(text: str) -> list[str]:
     import re
 
-    stop_words = {"the", "and", "und", "oder", "ich", "kenne", "schon", "ersetze", "ersetz", "mal", "mit", "einem", "anderen"}
+    stop_words = {
+        "the",
+        "and",
+        "und",
+        "oder",
+        "ich",
+        "kenne",
+        "schon",
+        "ersetze",
+        "ersetz",
+        "mal",
+        "mit",
+        "einem",
+        "anderen",
+        "andere",
+        "alternative",
+        "statt",
+        "anstatt",
+        "stattdessen",
+        "instead",
+        "rather",
+        "lieber",
+        "will",
+        "möchte",
+        "moechte",
+        "bitte",
+        "gehen",
+        "geben",
+        "hinzufügen",
+        "hinzufuegen",
+        "weitere",
+        "noch",
+        "eine",
+        "einen",
+        "das",
+        "die",
+        "der",
+        "mich",
+        "mir",
+    }
     return [
         token
         for token in re.findall(r"[a-z0-9]+", str(text).lower())
         if len(token) > 2 and token not in stop_words
     ]
-
-
-def _preferred_replacement_categories(original: Activity, revision: dict) -> set[str]:
-    text = " ".join(
-        [
-            str(revision.get("feedback") or ""),
-            " ".join(revision.get("must_have_additions") or []),
-            " ".join(revision.get("query_hints") or []),
-            str(revision.get("revision_instruction") or ""),
-        ]
-    ).lower()
-    if any(term in text for term in ["natur", "nature", "park", "garden", "tea garden", "viewpoint", "outdoor"]):
-        return {"nature", "culture"} if original.category == "culture" else {"nature"}
-    if any(term in text for term in ["restaurant", "essen", "food", "kueche", "küche"]):
-        return {"food"}
-    if any(term in text for term in ["anime", "shop", "shopping", "store"]):
-        return {"shopping", "anime"}
-    return {original.category}
 
 
 def _merge_unique(*groups: list[str]) -> list[str]:
@@ -668,8 +867,91 @@ def _removed_activity_payload(activities: list[Activity]) -> list[dict]:
 
 
 def _activity_conflicts_with_avoid(activity: Activity, avoid: list[str]) -> bool:
-    haystack = f"{activity.name} {activity.category} {activity.description}".lower()
+    haystack = _activity_search_text(activity)
     return any(term.strip().lower() and term.strip().lower() in haystack for term in avoid)
+
+
+def _repair_must_have_coverage(
+    itinerary: Itinerary,
+    candidates: list[Activity],
+    must_have: list[str],
+) -> list[str]:
+    notes: list[str] = []
+    if not must_have or not itinerary.days:
+        return notes
+
+    used_names = {activity.name.strip().lower() for day in itinerary.days for activity in day.activities}
+    for wish in must_have:
+        if _itinerary_covers_wish(itinerary, wish):
+            continue
+        replacement = _best_unused_activity_for_wish(candidates, used_names, wish)
+        if not replacement:
+            continue
+        target_day = min(itinerary.days, key=lambda day: (len(day.activities), day.total_duration_hours))
+        if len(target_day.activities) >= 4:
+            removed = _least_relevant_activity(target_day.activities, must_have)
+            if removed:
+                target_day.activities.remove(removed)
+                used_names.discard(removed.name.strip().lower())
+                target_day.notes.append(f"{removed.name} wurde ersetzt, damit ein offener Wunsch abgedeckt wird.")
+        target_day.activities.append(replacement)
+        used_names.add(replacement.name.strip().lower())
+        target_day.notes.append(f"{replacement.name} wurde ergaenzt, um den Wunsch '{wish}' abzudecken.")
+        notes.append(f"added {replacement.name} for missing wish '{wish}'")
+    return notes
+
+
+def _itinerary_covers_wish(itinerary: Itinerary, wish: str) -> bool:
+    return any(
+        _text_matches_requirement(_activity_search_text(activity), wish)
+        for day in itinerary.days
+        for activity in day.activities
+    )
+
+
+def _best_unused_activity_for_wish(
+    candidates: list[Activity],
+    used_names: set[str],
+    wish: str,
+) -> Activity | None:
+    scored: list[tuple[float, Activity]] = []
+    for activity in candidates:
+        key = activity.name.strip().lower()
+        if key in used_names:
+            continue
+        score = _requirement_match_score(_activity_search_text(activity), wish)
+        if score > 0:
+            scored.append((score, activity))
+    if not scored:
+        return None
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored[0][1]
+
+
+def _least_relevant_activity(activities: list[Activity], must_have: list[str]) -> Activity | None:
+    if not activities:
+        return None
+    scored = [
+        (
+            max((_requirement_match_score(_activity_search_text(activity), wish) for wish in must_have), default=0),
+            activity,
+        )
+        for activity in activities
+    ]
+    scored.sort(key=lambda item: item[0])
+    return scored[0][1]
+
+
+def _text_matches_requirement(text: str, requirement: str) -> bool:
+    return _requirement_match_score(text, requirement) >= 0.45
+
+
+def _requirement_match_score(text: str, requirement: str) -> float:
+    tokens = _match_tokens(requirement)
+    if not tokens:
+        return 0.0
+    matches = sum(1 for token in tokens if token in text)
+    return matches / max(1, len(tokens))
 
 
 def _enforce_hard_activity_constraints(itinerary: Itinerary, avoid: list[str]) -> list[str]:
