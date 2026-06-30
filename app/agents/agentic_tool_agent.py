@@ -19,7 +19,7 @@ def run_agentic_tool_workflow(
     profile: UserProfile,
 ) -> dict:
     candidate_summary = _candidate_summary(activities)
-    wish_coverage = _wish_coverage(activities, [*must_have, *query_hints])
+    wish_coverage = _wish_coverage(activities, must_have)
     target_min, target_max = target_budget_range(budget, profile)
     fallback = {
         "enabled": False,
@@ -138,13 +138,46 @@ def _wish_coverage(activities: list[Activity], wishes: list[str]) -> dict:
 
 
 def _matches_wish(activity: Activity, wish: str) -> bool:
-    text = f"{activity.name} {activity.category} {activity.description}".lower()
+    if _matched_must_have_covers(activity.description, wish):
+        return True
+    text = f"{activity.name} {activity.category} {_matching_description(activity.description)}".lower()
     tokens = _content_tokens(wish)
     if not tokens:
         return False
     matches = sum(1 for token in tokens if token in text)
     threshold = 1 if len(tokens) == 1 else max(2, round(len(tokens) * 0.65))
     return matches >= threshold
+
+
+def _matched_must_have_covers(description: str, wish: str) -> bool:
+    matched = _description_field(description, "Matched must-have")
+    wanted = " ".join(str(wish or "").lower().split())
+    if not matched or not wanted:
+        return False
+    return any(" ".join(part.lower().split()) == wanted for part in matched.split(","))
+
+
+def _matching_description(description: str) -> str:
+    kept: list[str] = []
+    blocked_labels = {"matched query", "matched must-have", "google maps", "website"}
+    for part in str(description or "").split("|"):
+        cleaned = part.strip()
+        label = cleaned.split(":", 1)[0].strip().lower() if ":" in cleaned else ""
+        if label in blocked_labels:
+            continue
+        if cleaned.lower().startswith(("http://", "https://")):
+            continue
+        kept.append(cleaned)
+    return " | ".join(kept)
+
+
+def _description_field(description: str, label: str) -> str:
+    marker = f"{label}:"
+    for part in str(description or "").split("|"):
+        cleaned = part.strip()
+        if cleaned.lower().startswith(marker.lower()):
+            return cleaned.split(":", 1)[1].strip()
+    return ""
 
 
 def _content_tokens(text: str) -> list[str]:

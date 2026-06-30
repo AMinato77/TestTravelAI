@@ -430,7 +430,7 @@ def _select_revision_queries(query_hints: list[str], must_have: list[str], desti
     selected: list[PlaceQuery] = []
     seen: set[str] = set()
     for query in query_hints:
-        cleaned = " ".join(str(query).strip().split())
+        cleaned = _clean_revision_query_hint(str(query))
         if not cleaned:
             continue
         if destination and destination.lower() not in cleaned.lower():
@@ -452,9 +452,23 @@ def _select_revision_queries(query_hints: list[str], must_have: list[str], desti
     return selected
 
 
+def _clean_revision_query_hint(query: str) -> str:
+    import re
+
+    cleaned = " ".join(str(query or "").strip().split())
+    if not cleaned:
+        return ""
+    cleaned = re.sub(r"\banstatt\b.+?\bbitte\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\binstead of\b.+?\bplease\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(gib|gebe|mir|bitte|please|stattdessen|instead)\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(ich|moechte|möchte|will|haette|hätte|gerne|ein|eine|einen|das|die|der)\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = " ".join(cleaned.split())
+    return cleaned or " ".join(str(query or "").strip().split())
+
+
 def _matched_must_have_for_query(query: str, must_have: list[str]) -> list[str]:
     matched = [wish for wish in must_have if _text_matches_requirement(query.lower(), wish)]
-    return matched or must_have[:1]
+    return matched
 
 
 def _configured_int(name: str, fallback: int, minimum: int, maximum: int) -> int:
@@ -903,7 +917,7 @@ def _repair_must_have_coverage(
 
 def _itinerary_covers_wish(itinerary: Itinerary, wish: str) -> bool:
     return any(
-        _text_matches_requirement(_activity_search_text(activity), wish)
+        _activity_covers_wish(activity, wish)
         for day in itinerary.days
         for activity in day.activities
     )
@@ -919,7 +933,7 @@ def _best_unused_activity_for_wish(
         key = activity.name.strip().lower()
         if key in used_names:
             continue
-        score = _requirement_match_score(_activity_search_text(activity), wish)
+        score = _wish_coverage_score(activity, wish)
         if score > 0:
             scored.append((score, activity))
     if not scored:
@@ -933,7 +947,7 @@ def _least_relevant_activity(activities: list[Activity], must_have: list[str]) -
         return None
     scored = [
         (
-            max((_requirement_match_score(_activity_search_text(activity), wish) for wish in must_have), default=0),
+            max((_wish_coverage_score(activity, wish) for wish in must_have), default=0),
             activity,
         )
         for activity in activities
@@ -944,6 +958,33 @@ def _least_relevant_activity(activities: list[Activity], must_have: list[str]) -
 
 def _text_matches_requirement(text: str, requirement: str) -> bool:
     return _requirement_match_score(text, requirement) >= 0.45
+
+
+def _activity_covers_wish(activity: Activity, wish: str) -> bool:
+    return _matched_must_have_covers(activity.description, wish) or _text_matches_requirement(_activity_search_text(activity), wish)
+
+
+def _wish_coverage_score(activity: Activity, wish: str) -> float:
+    if _matched_must_have_covers(activity.description, wish):
+        return 2.0
+    return _requirement_match_score(_activity_search_text(activity), wish)
+
+
+def _matched_must_have_covers(description: str, wish: str) -> bool:
+    matched = _description_field(description, "Matched must-have")
+    wanted = " ".join(str(wish or "").lower().split())
+    if not matched or not wanted:
+        return False
+    return any(" ".join(part.lower().split()) == wanted for part in matched.split(","))
+
+
+def _description_field(description: str, label: str) -> str:
+    marker = f"{label}:"
+    for part in str(description or "").split("|"):
+        cleaned = part.strip()
+        if cleaned.lower().startswith(marker.lower()):
+            return cleaned.split(":", 1)[1].strip()
+    return ""
 
 
 def _requirement_match_score(text: str, requirement: str) -> float:
