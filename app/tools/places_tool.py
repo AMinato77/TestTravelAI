@@ -11,6 +11,7 @@ import requests
 from app.agents.query_planning_agent import PlaceQuery
 from app.models.activity import Activity
 from app.services.destination_normalizer import destination_matches_text, normalize_destination
+from app.services.wish_matching import infer_intents
 
 
 GOOGLE_PLACES_URL = "https://places.googleapis.com/v1/places:searchText"
@@ -41,7 +42,7 @@ def search_places_with_metadata(
     destination = normalize_destination(destination)
     planned_queries = _normalize_queries(destination, queries, avoid or [])
     if not planned_queries:
-        planned_queries = [PlaceQuery(query=f"best things to do {destination}", reason="Generic fallback.", source="places_tool")]
+        raise ValueError("Google Places search requires at least one concrete query. No generic fallback query is used.")
 
     per_query_limit = max(5, min(20, math.ceil(limit / max(1, len(planned_queries))) + 4))
     activities: list[Activity] = []
@@ -96,8 +97,7 @@ def _normalize_queries(destination: str, queries: list[str] | list[PlaceQuery], 
         text = " ".join(query.query.strip().split())
         if not text:
             continue
-        if destination.lower() not in text.lower():
-            text = f"{text} {destination}"
+        text = _ensure_query_destination(text, destination)
         if _query_conflicts_with_avoid(text, avoid):
             continue
         key = text.lower()
@@ -106,6 +106,25 @@ def _normalize_queries(destination: str, queries: list[str] | list[PlaceQuery], 
         seen.add(key)
         result.append(PlaceQuery(query=text, reason=query.reason, source=query.source, must_have=query.must_have))
     return result
+
+
+def _ensure_query_destination(query: str, destination: str) -> str:
+    text = " ".join(query.strip().split())
+    if not destination:
+        return text
+    lowered = text.lower()
+    destination_lower = destination.lower()
+    if destination_lower in lowered:
+        return text
+    if "," in destination:
+        city, country = [part.strip() for part in destination.split(",", 1)]
+        city_lower = city.lower()
+        country_lower = country.lower()
+        if city_lower in lowered and country_lower not in lowered:
+            return f"{text} {country}"
+        if country_lower in lowered and city_lower not in lowered:
+            return f"{text} {city}"
+    return f"{text} {destination}"
 
 
 def _query_conflicts_with_avoid(query: str, avoid: list[str]) -> bool:
@@ -167,7 +186,7 @@ def _place_to_activity(place: dict, planned_query: PlaceQuery) -> Activity | Non
         name=name,
         category=category,
         description=_build_description(place, category, planned_query),
-        cost=_estimate_cost(category),
+        cost=_estimate_cost(category, types, planned_query.query),
         duration_hours=_estimate_duration(category),
         indoor=_estimate_indoor(category, types),
         latitude=location.get("latitude"),
@@ -210,6 +229,13 @@ def _build_description(place: dict, category: str, planned_query: PlaceQuery) ->
 def _normalize_category(types: list[str], query: str, name: str) -> str:
     joined = " ".join(types).lower()
     query_text = f"{query} {name}".lower()
+    query_intents = infer_intents(query_text)
+    if "culture" in query_intents and any(value in joined for value in ["museum", "art_gallery", "tourist_attraction", "historical_landmark", "historical_place", "church", "castle", "mosque", "temple"]):
+        return "culture"
+    if "nature" in query_intents and any(value in joined for value in ["park", "garden", "natural_feature", "hiking", "beach", "scenic_spot"]):
+        return "nature"
+    if "shopping" in query_intents and any(value in joined for value in ["shopping_mall", "market", "store", "book_store", "toy_store"]):
+        return "shopping"
     if any(value in joined for value in ["restaurant", "cafe", "bakery", "meal", "food"]):
         return "food"
     if any(value in joined for value in ["bar", "night_club"]):
@@ -231,15 +257,21 @@ def _normalize_category(types: list[str], query: str, name: str) -> str:
     return "activity"
 
 
-def _estimate_cost(category: str) -> float:
+def _estimate_cost(category: str, types: list[str] | None = None, query: str = "") -> float:
+    joined = " ".join(types or []).lower()
+    query_text = str(query or "").lower()
+    if "fine_dining_restaurant" in joined:
+        return 75.0
+    if "tour_agency" in joined or "travel_agency" in joined or "tour" in query_text:
+        return 45.0
     if category == "food":
-        return 25.0
+        return 35.0
     if category in {"culture", "entertainment"}:
-        return 18.0
+        return 25.0
     if category == "nature":
         return 0.0
     if category == "nightlife":
-        return 25.0
+        return 35.0
     if category in {"shopping", "sport"}:
         return 20.0
     return 12.0

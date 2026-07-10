@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 from app.agents.activity_evaluation_agent import evaluate_activities
 from app.agents.agentic_quality_agent import run_agentic_quality_review
-from app.agents.agentic_tool_agent import run_agentic_tool_workflow
+from app.agents.agentic_planning_workflow import run_agentic_planning_workflow, run_agentic_validation_workflow
 from app.agents.destination_agent import resolve_destination
 from app.agents.explanation_agent import explain_travel_plan
 from app.agents.planning_agent import plan_itinerary
@@ -24,11 +24,11 @@ from app.rag.preference_documents import load_preference_sources
 from app.rag.user_memory import load_user_profile, update_user_profile
 from app.services.cost_tracker import estimate_tool_cost_report, google_places_trace, openai_llm_trace, trace_to_dict
 from app.services.destination_normalizer import normalize_destination
+from app.services.wish_matching import activity_covers_wish, activity_intents, activity_text, activity_wish_score, infer_intents, matched_must_have_covers, token_overlap_score
 from app.tools.openai_runtime import openai_usage_records, reset_openai_usage_records
 from app.tools.optimization_tool import optimize_itinerary
 from app.tools.places_tool import search_places_with_metadata
 from app.tools.validation_tool import validate_itinerary
-from app.tools.weather_tool import get_weather
 
 
 @dataclass(slots=True)
@@ -147,11 +147,24 @@ def build_travel_plan(
     place_queries, query_planning = plan_place_queries(request, memory_context)
     workflow_steps.append(f"Query Planning Agent produced {len(place_queries)} concrete Google Places query/queries.")
 
-    external_activities, places_metadata = search_places_with_metadata(
+    agentic_preplan = run_agentic_planning_workflow(
         destination=request.destination,
-        queries=place_queries,
+        days=request.duration_days,
+        budget=request.budget,
+        profile=profile,
+        place_queries=place_queries,
         avoid=profile.avoid,
+        must_have=request.must_have,
+        query_hints=request.query_hints,
+        memory_context=memory_context,
     )
+    external_activities = agentic_preplan.activities
+    places_metadata = agentic_preplan.places_metadata
+    weather = agentic_preplan.weather
+    agentic_tool_workflow = agentic_preplan.workflow
+    workflow_steps.append(agentic_tool_workflow.get("summary", "Agentic tool workflow inspected planning inputs."))
+    for call in (agentic_tool_workflow.get("tool_calls") or [])[:5]:
+        workflow_steps.append(f"Tool decision: {call.get('tool')} - {call.get('decision')}")
     workflow_steps.append(f"Google Places returned {len(external_activities)} candidate(s).")
 
     activities_before_filter = _deduplicate_activities(external_activities)
@@ -184,19 +197,11 @@ def build_travel_plan(
         f"Activity Evaluation Agent kept {len(activities)} candidate(s) and removed {len(activity_evaluation.get('removed', []))} weak match(es)."
     )
 
-    agentic_tool_workflow = run_agentic_tool_workflow(
-        destination=request.destination,
-        days=request.duration_days,
-        activities=activities,
-        must_have=request.must_have,
-        query_hints=request.query_hints,
-        budget=request.budget,
-        profile=profile,
-    )
-    workflow_steps.append(agentic_tool_workflow.get("summary", "Internal tool workflow inspected candidate quality."))
-
-    weather = get_weather(request.destination, days=request.duration_days)
-    workflow_steps.append("Weather tool returned travel weather context.")
+    agentic_tool_workflow["activity_evaluation"] = {
+        "kept_candidates": len(activities),
+        "removed_candidates": len(activity_evaluation.get("removed", [])),
+    }
+    workflow_steps.append("Weather tool returned travel weather context through the agentic tool workflow.")
 
     itinerary = plan_itinerary(request.destination, request.duration_days, request.budget, activities, weather, profile, constraints=constraints)
     workflow_steps.append("Planning Agent generated the first itinerary.")
@@ -207,14 +212,27 @@ def build_travel_plan(
     if repair_notes:
         workflow_steps.append(f"Hard constraint guard repaired the first itinerary: {'; '.join(repair_notes)}")
 
-    validation = validate_itinerary(itinerary, request.budget, weather, profile, constraints=constraints)
+    validation_workflow_result = run_agentic_validation_workflow(
+        itinerary=itinerary,
+        budget=request.budget,
+        weather=weather,
+        profile=profile,
+        constraints=constraints,
+    )
+    validation = validation_workflow_result.validation
+    agentic_tool_workflow["validation_workflow"] = validation_workflow_result.workflow
+    agentic_tool_workflow["tool_calls"] = [
+        *(agentic_tool_workflow.get("tool_calls") or []),
+        *(validation_workflow_result.workflow.get("tool_calls") or []),
+    ]
     initial_itinerary = deepcopy(itinerary)
     initial_validation = deepcopy(validation)
     workflow_steps.append(f"Validation found {len(validation.issues)} issue(s), including semantic request checks.")
+    workflow_steps.append(validation_workflow_result.workflow.get("summary", "Validation tool workflow completed."))
 
     optimized = False
     for attempt in range(1, 4):
-        if validation.ok:
+        if not _needs_optimization(validation):
             break
         previous_signature = _validation_signature(validation)
         itinerary = optimize_itinerary(itinerary, activities, request.budget, weather, profile, constraints=constraints)
@@ -532,6 +550,8 @@ def _apply_revision_to_itinerary(
 
     if intent != "reduce_intensity" and target_terms:
         target = _find_itinerary_activity(itinerary, target_terms, target_day)
+        if not target and intent in {"replace_activity", "general_revision"}:
+            target = _find_itinerary_activity_by_revision_intent(itinerary, revision, target_day)
         if target:
             day, index, activity = target
             replacement = _find_replacement_activity(activity, activities, used, avoid, revision)
@@ -576,6 +596,31 @@ def _apply_revision_to_itinerary(
     return ""
 
 
+def _find_itinerary_activity_by_revision_intent(
+    itinerary: Itinerary,
+    revision: dict,
+    target_day: int | None,
+) -> tuple | None:
+    text = " ".join(
+        [
+            str(revision.get("feedback") or ""),
+            " ".join(revision.get("replacement_requirements") or []),
+            " ".join(revision.get("query_hints") or []),
+            str(revision.get("revision_instruction") or ""),
+        ]
+    )
+    desired_intents = infer_intents(text)
+    if not desired_intents:
+        return None
+    for day in itinerary.days:
+        if target_day and day.day != target_day:
+            continue
+        for index, activity in enumerate(day.activities):
+            if activity_intents(activity) & desired_intents:
+                return day, index, activity
+    return None
+
+
 def _find_replacement_activity(
     original: Activity,
     activities: list[Activity],
@@ -599,6 +644,9 @@ def _find_replacement_activity(
     if candidates:
         candidates.sort(key=lambda item: item[0], reverse=True)
         return candidates[0][1]
+    same_category = _first_unused_same_category(activities, used, avoid, original.category)
+    if same_category:
+        return same_category
     if allow_old_type_fallback:
         return _first_unused_activity(activities, used, avoid)
     return None
@@ -611,11 +659,26 @@ def _replacement_score(
     desired_tokens: set[str],
     allow_old_type_fallback: bool,
 ) -> float:
+    desired_intents = infer_intents(
+        " ".join(
+            [
+                str(revision.get("feedback") or ""),
+                " ".join(revision.get("replacement_requirements") or []),
+                " ".join(revision.get("query_hints") or []),
+                str(revision.get("revision_instruction") or ""),
+            ]
+        )
+    )
+    if desired_intents and not (activity_intents(candidate) & desired_intents):
+        return 0.0
     candidate_text = _activity_search_text(candidate)
     candidate_tokens = set(_match_tokens(candidate_text))
     desired_overlap = desired_tokens & candidate_tokens
     if desired_tokens:
-        return float(len(desired_overlap) * 5)
+        score = float(len(desired_overlap) * 5)
+        if candidate.category == original.category:
+            score += 2.0
+        return score
 
     score = 0.0
     if allow_old_type_fallback and candidate.category == original.category:
@@ -689,7 +752,19 @@ def _clean_revision_search_text(feedback: str, original: Activity) -> str:
         cleaned,
         flags=re.IGNORECASE,
     )
-    return " ".join(cleaned.split())
+    cleaned = " ".join(cleaned.split())
+    if len(_match_tokens(cleaned)) >= 2:
+        return cleaned
+    category_queries = {
+        "food": "traditional local restaurant",
+        "culture": "museum historic cultural attraction",
+        "nature": "scenic nature outdoor attraction",
+        "shopping": "local shops market stores",
+        "entertainment": "entertainment experience",
+        "nightlife": "bar nightlife experience",
+        "sport": "sport activity venue",
+    }
+    return category_queries.get(original.category, f"{original.category} local experience")
 
 
 def _activity_search_text(activity: Activity) -> str:
@@ -716,6 +791,24 @@ def _first_unused_activity(activities: list[Activity], used: set[str], avoid: li
     for activity in activities:
         key = activity.name.strip().lower()
         if key in used:
+            continue
+        if _activity_conflicts_with_avoid(activity, avoid):
+            continue
+        return activity
+    return None
+
+
+def _first_unused_same_category(
+    activities: list[Activity],
+    used: set[str],
+    avoid: list[str],
+    category: str,
+) -> Activity | None:
+    for activity in activities:
+        key = activity.name.strip().lower()
+        if key in used:
+            continue
+        if activity.category != category:
             continue
         if _activity_conflicts_with_avoid(activity, avoid):
             continue
@@ -957,25 +1050,19 @@ def _least_relevant_activity(activities: list[Activity], must_have: list[str]) -
 
 
 def _text_matches_requirement(text: str, requirement: str) -> bool:
-    return _requirement_match_score(text, requirement) >= 0.45
+    return token_overlap_score(text, requirement) >= 0.5
 
 
 def _activity_covers_wish(activity: Activity, wish: str) -> bool:
-    return _matched_must_have_covers(activity.description, wish) or _text_matches_requirement(_activity_search_text(activity), wish)
+    return activity_covers_wish(activity, wish)
 
 
 def _wish_coverage_score(activity: Activity, wish: str) -> float:
-    if _matched_must_have_covers(activity.description, wish):
-        return 2.0
-    return _requirement_match_score(_activity_search_text(activity), wish)
+    return activity_wish_score(activity, wish)
 
 
 def _matched_must_have_covers(description: str, wish: str) -> bool:
-    matched = _description_field(description, "Matched must-have")
-    wanted = " ".join(str(wish or "").lower().split())
-    if not matched or not wanted:
-        return False
-    return any(" ".join(part.lower().split()) == wanted for part in matched.split(","))
+    return matched_must_have_covers(description, wish)
 
 
 def _description_field(description: str, label: str) -> str:
@@ -988,11 +1075,7 @@ def _description_field(description: str, label: str) -> str:
 
 
 def _requirement_match_score(text: str, requirement: str) -> float:
-    tokens = _match_tokens(requirement)
-    if not tokens:
-        return 0.0
-    matches = sum(1 for token in tokens if token in text)
-    return matches / max(1, len(tokens))
+    return token_overlap_score(text, requirement)
 
 
 def _enforce_hard_activity_constraints(itinerary: Itinerary, avoid: list[str]) -> list[str]:
@@ -1024,3 +1107,10 @@ def _validation_signature(validation: ValidationResult) -> tuple:
     return tuple(
         sorted((issue.severity, issue.issue_type, issue.day, issue.activity, issue.message) for issue in validation.issues)
     )
+
+
+def _needs_optimization(validation: ValidationResult) -> bool:
+    if not validation.ok:
+        return True
+    actionable_warnings = {"budget_underused", "must_have_gap", "day_underfilled", "day_overload", "schedule_overload", "rain_conflict"}
+    return any(issue.severity == "warning" and issue.issue_type in actionable_warnings for issue in validation.issues)

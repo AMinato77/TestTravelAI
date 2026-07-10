@@ -9,9 +9,10 @@ from app.rag.memory_retrieval import retrieve_user_memory
 from app.rag.user_memory import load_user_profile
 from app.services.budget_strategy import target_budget_range
 from app.services.cost_tracker import estimate_tool_cost_report
+from app.agents.query_planning_agent import PlaceQuery
 from app.services.serialization import activity_from_dict, activity_to_dict, itinerary_from_dict, itinerary_to_dict, validation_to_dict
 from app.tools.optimization_tool import optimize_itinerary
-from app.tools.places_tool import search_places
+from app.tools.places_tool import search_places_with_metadata
 from app.tools.validation_tool import validate_itinerary
 from app.tools.weather_tool import get_weather
 
@@ -21,7 +22,7 @@ app = FastAPI(title="TravelAI Tool Server", version="1.0.0")
 
 class PlacesSearchRequest(BaseModel):
     destination: str
-    queries: list[str] = Field(default_factory=list)
+    queries: list[str | dict] = Field(default_factory=list)
     avoid: list[str] = Field(default_factory=list)
     limit: int = 20
 
@@ -71,13 +72,17 @@ def health() -> dict:
 
 @app.post("/tools/places/search")
 def places_search(request: PlacesSearchRequest) -> dict:
-    activities = search_places(
+    queries = [_place_query_from_payload(query) for query in request.queries]
+    activities, metadata = search_places_with_metadata(
         destination=request.destination,
-        queries=request.queries,
+        queries=queries,
         avoid=request.avoid,
         limit=request.limit,
     )
-    return {"activities": [activity_to_dict(activity) for activity in activities]}
+    return {
+        "activities": [activity_to_dict(activity) for activity in activities],
+        "metadata": metadata,
+    }
 
 
 @app.post("/tools/weather")
@@ -157,3 +162,14 @@ def preference_source_from_tool_memory(data: dict) -> PreferenceSource:
         name=str(data.get("name") or "memory_chunk"),
         text=str(data.get("text") or ""),
     )
+
+
+def _place_query_from_payload(value: str | dict) -> PlaceQuery:
+    if isinstance(value, dict):
+        return PlaceQuery(
+            query=str(value.get("query") or ""),
+            reason=str(value.get("reason") or ""),
+            source=str(value.get("source") or "tool_server"),
+            must_have=[str(item) for item in value.get("must_have", []) if str(item).strip()],
+        )
+    return PlaceQuery(query=str(value), source="tool_server")

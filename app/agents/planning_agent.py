@@ -36,6 +36,13 @@ def plan_itinerary(
             "Create a realistic itinerary using only provided activity names. "
             "Prioritize concrete user wishes, preference notes, avoid constraints, weather, "
             "budget, and relaxed pacing. Do not repeat activities. "
+            "For balanced trips, plan roughly 5-8 hours of activities per day unless too few candidates exist. "
+            "Use the target budget range as a real planning goal, not just a maximum. "
+            "If the user asks for food experiences, prefer true culinary experiences such as restaurants, "
+            "food tours, food markets, local cuisine, seafood, street food, or distinctive dining; do not treat "
+            "generic sightseeing as food coverage. If the user asks for nature, beaches, landscapes, or scenery, "
+            "select actual outdoor/nature/beach/scenic candidates; do not treat restaurants or shops as nature coverage. "
+            "Keep each concrete wish visibly represented by at least one directly matching activity. "
             "Return strict JSON with key days. Each day has day, activity_names, notes. "
             "Write concise German user-facing notes."
         ),
@@ -85,7 +92,9 @@ def _itinerary_from_plan(destination: str, data: dict, activities: list[Activity
         )
 
     if not plan_days:
-        return create_initial_itinerary(destination, requested_days, activities)
+        if demo_fallback_enabled():
+            return create_initial_itinerary(destination, requested_days, activities)
+        raise RuntimeError("Planning Agent returned no valid days; no static template itinerary fallback is used in OpenAI mode.")
 
     _repair_day_count_and_empty_days(plan_days, activities, requested_days, used_names)
     return Itinerary(destination=destination, days=plan_days)

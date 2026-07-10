@@ -32,17 +32,72 @@ def optimize_itinerary_rules(
         elif issue.issue_type == "budget_exceeded":
             _reduce_budget(itinerary, budget, cheap_alternatives)
         elif issue.issue_type == "budget_underused":
+            _add_underused_budget_activities(itinerary, safe_alternatives, budget)
             add_budget_upgrades(itinerary, budget, profile)
         elif issue.issue_type == "preference_conflict":
             _replace_preference_conflict(itinerary, issue.day, issue.activity, safe_alternatives, profile)
         elif issue.issue_type == "empty_day":
             _fill_empty_day(itinerary, issue.day, safe_alternatives)
+        elif issue.issue_type == "day_underfilled":
+            _fill_underfilled_day(itinerary, issue.day, safe_alternatives, budget)
 
     if itinerary.total_cost > budget:
         _reduce_budget(itinerary, budget, cheap_alternatives)
     add_budget_upgrades(itinerary, budget, profile)
 
     return itinerary
+
+
+def _add_underused_budget_activities(itinerary: Itinerary, alternatives: list[Activity], budget: float) -> None:
+    if not itinerary.days:
+        return
+    target_total = budget * 0.55
+    attempts = 0
+    while itinerary.total_cost < target_total and attempts < 12:
+        attempts += 1
+        day = min(itinerary.days, key=lambda candidate: (candidate.total_duration_hours, len(candidate.activities)))
+        replacement = _best_budget_addition(alternatives, itinerary, day, budget)
+        if not replacement:
+            return
+        day.activities.append(replacement)
+        _add_note(day, f"{replacement.name} wurde ergaenzt, um den Plan inhaltlich und budgetseitig staerker zu machen.")
+
+
+def _fill_underfilled_day(itinerary: Itinerary, day_number: int | None, alternatives: list[Activity], budget: float) -> None:
+    day = _find_day(itinerary, day_number) if day_number is not None else None
+    if not day:
+        return
+    while day.total_duration_hours < 5 and len(day.activities) < 4:
+        replacement = _best_budget_addition(alternatives, itinerary, day, budget)
+        if not replacement:
+            return
+        day.activities.append(replacement)
+        _add_note(day, f"{replacement.name} wurde ergaenzt, damit der Tag nicht zu leer bleibt.")
+
+
+def _best_budget_addition(alternatives: list[Activity], itinerary: Itinerary, day, budget: float) -> Activity | None:
+    used = {activity.name for itinerary_day in itinerary.days for activity in itinerary_day.activities}
+    day_categories = {activity.category for activity in day.activities}
+    remaining_budget = max(0.0, budget - itinerary.total_cost)
+    candidates = [
+        candidate
+        for candidate in alternatives
+        if candidate.name not in used
+        and candidate.source != "budget_strategy"
+        and candidate.cost <= remaining_budget
+        and day.total_duration_hours + candidate.duration_hours <= 8
+    ]
+    if not candidates:
+        return None
+    candidates.sort(
+        key=lambda candidate: (
+            candidate.category not in day_categories,
+            candidate.cost,
+            candidate.duration_hours,
+        ),
+        reverse=True,
+    )
+    return candidates[0]
 
 
 def _replace_rain_conflict(

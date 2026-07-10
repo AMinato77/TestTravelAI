@@ -63,8 +63,8 @@ def parse_travel_request(text: str, fallback: TravelRequest) -> TravelRequest:
                 model_env="OPENAI_REQUEST_MODEL",
             )
             return _request_from_data(data, text, fallback)
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RuntimeError(f"Request Agent failed; no deterministic demo fallback is used in OpenAI mode: {exc}") from exc
 
     return _fallback_parse(text, fallback)
 

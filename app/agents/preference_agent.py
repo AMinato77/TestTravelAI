@@ -51,8 +51,8 @@ def extract_preferences(
                 avoid=_merge_unique(request.avoid, _clean_values(data.get("avoid"))),
                 source_notes=_clean_values(data.get("source_notes")) or ["Preference memory summarized from current request and retrieved context."],
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RuntimeError(f"Preference Memory Agent failed; no deterministic demo fallback is used in OpenAI mode: {exc}") from exc
 
     return _fallback_preferences(request, budget_preference, preference_sources)
 

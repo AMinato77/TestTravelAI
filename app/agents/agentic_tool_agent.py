@@ -6,6 +6,7 @@ from collections import Counter
 from app.models.activity import Activity
 from app.models.user_profile import UserProfile
 from app.services.budget_strategy import target_budget_range
+from app.services.wish_matching import activity_covers_wish
 from app.tools.openai_runtime import ai_provider, openai_model
 
 
@@ -138,15 +139,7 @@ def _wish_coverage(activities: list[Activity], wishes: list[str]) -> dict:
 
 
 def _matches_wish(activity: Activity, wish: str) -> bool:
-    if _matched_must_have_covers(activity.description, wish):
-        return True
-    text = f"{activity.name} {activity.category} {_matching_description(activity.description)}".lower()
-    tokens = _content_tokens(wish)
-    if not tokens:
-        return False
-    matches = sum(1 for token in tokens if token in text)
-    threshold = 1 if len(tokens) == 1 else max(2, round(len(tokens) * 0.65))
-    return matches >= threshold
+    return activity_covers_wish(activity, wish)
 
 
 def _matched_must_have_covers(description: str, wish: str) -> bool:

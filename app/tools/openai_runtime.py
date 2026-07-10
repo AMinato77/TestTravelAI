@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(ROOT / ".env", override=True)
+load_dotenv(ROOT / ".env", override=False)
 
 _OPENAI_USAGE_RECORDS: list[dict] = []
 
@@ -28,7 +28,7 @@ def ai_provider() -> str:
 
 
 def demo_fallback_enabled() -> bool:
-    return ai_provider() == "demo" or os.getenv("OPENAI_ALLOW_DEMO_FALLBACK", "false").lower() == "true"
+    return ai_provider() == "demo"
 
 
 def get_openai_client() -> OpenAI:
@@ -86,7 +86,11 @@ def _generate_openai_json(system_prompt: str, payload: dict, model_env: str) -> 
     ]
 
     if hasattr(client, "responses"):
-        response = client.responses.create(model=model, input=messages)
+        response = client.responses.create(
+            model=model,
+            input=messages,
+            text={"format": {"type": "json_object"}},
+        )
         _record_openai_usage(model_env, model, response)
         return _loads_json_object(response.output_text)
 

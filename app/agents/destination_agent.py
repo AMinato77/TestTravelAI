@@ -18,36 +18,33 @@ def resolve_destination(request: TravelRequest) -> dict:
     if demo_fallback_enabled():
         return _fallback_destination(request)
 
-    try:
-        data = generate_json(
-            system_prompt=(
-                "You are a Destination Decision Agent for a travel planner. "
-                "If the user gave a country/region or asked which city is best, choose one concrete city. "
-                "Optimize for concrete must-have wishes, query hints, avoid list, travel style, and realistic availability "
-                "of activities. Return strict JSON with keys: destination, summary, candidates. "
-                "candidates is a list of objects with city, score, reason. "
-                "Never choose a fallback city from old memory when the request explicitly names a country."
-            ),
-            payload={
-                "destination": request.destination,
-                "destination_scope": request.destination_scope,
-                "needs_destination_recommendation": request.needs_destination_recommendation,
-                "must_have": request.must_have,
-                "query_hints": request.query_hints,
-                "interest_tags": request.interest_tags,
-                "avoid": request.avoid,
-                "duration_days": request.duration_days,
-                "budget": {"amount": request.budget, "currency": "EUR"},
-                "travel_style": request.travel_style,
-            },
-            model_env="OPENAI_DESTINATION_MODEL",
-        )
-    except Exception:
-        return _fallback_destination(request)
+    data = generate_json(
+        system_prompt=(
+            "You are a Destination Decision Agent for a travel planner. "
+            "If the user gave a country/region or asked which city is best, choose one concrete city. "
+            "Optimize for concrete must-have wishes, query hints, avoid list, travel style, and realistic availability "
+            "of activities. Return strict JSON with keys: destination, summary, candidates. "
+            "candidates is a list of objects with city, score, reason. "
+            "Never choose a fallback city from old memory when the request explicitly names a country."
+        ),
+        payload={
+            "destination": request.destination,
+            "destination_scope": request.destination_scope,
+            "needs_destination_recommendation": request.needs_destination_recommendation,
+            "must_have": request.must_have,
+            "query_hints": request.query_hints,
+            "interest_tags": request.interest_tags,
+            "avoid": request.avoid,
+            "duration_days": request.duration_days,
+            "budget": {"amount": request.budget, "currency": "EUR"},
+            "travel_style": request.travel_style,
+        },
+        model_env="OPENAI_DESTINATION_MODEL",
+    )
 
     selected = str(data.get("destination") or "").strip()
     if not selected:
-        return _fallback_destination(request)
+        raise RuntimeError("Destination Decision Agent returned no destination; no deterministic demo fallback is used in OpenAI mode.")
 
     return {
         "destination": selected,

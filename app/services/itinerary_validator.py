@@ -62,6 +62,15 @@ def validate_itinerary_rules(
                     day=day.day,
                 )
             )
+        elif day.activities and day.total_duration_hours < 5:
+            issues.append(
+                ValidationIssue(
+                    severity="warning",
+                    issue_type="day_underfilled",
+                    message="This day has less than 5 hours of planned activities.",
+                    day=day.day,
+                )
+            )
 
         if profile and profile.travel_style == "relaxed" and len(day.activities) > 2:
             issues.append(

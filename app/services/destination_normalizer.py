@@ -25,6 +25,9 @@ DESTINATION_ALIASES = {
     "tokyo": "Tokyo",
     "turin": "Turin",
     "torino": "Turin",
+    "athen": "Athens",
+    "athens": "Athens",
+    "athina": "Athens",
 }
 
 DESTINATION_MATCH_TERMS = {
@@ -34,6 +37,7 @@ DESTINATION_MATCH_TERMS = {
     "munich": ["munich", "muenchen", "munchen", "münchen"],
     "lisbon": ["lisbon", "lissabon", "lisboa"],
     "tokyo": ["tokyo", "tokio"],
+    "athens": ["athens", "athina", "athen"],
 }
 
 
@@ -42,6 +46,8 @@ def normalize_destination(destination: str) -> str:
     cleaned = _clean_destination(destination)
     if not cleaned:
         return ""
+    if "," in cleaned:
+        return ", ".join(part.strip().title() for part in cleaned.split(",") if part.strip())
     key = cleaned.lower()
     return DESTINATION_ALIASES.get(key, cleaned.title())
 
@@ -64,6 +70,17 @@ def destination_match_terms(destination: str) -> list[str]:
     normalized = normalize_destination(destination)
     if not normalized:
         return []
+    if "," in normalized:
+        parts = [part.strip().lower() for part in normalized.split(",") if part.strip()]
+        city_aliases = DESTINATION_MATCH_TERMS.get(parts[0], [parts[0]]) if parts else []
+        result: list[str] = []
+        seen: set[str] = set()
+        for term in [normalized.lower(), *city_aliases, *parts]:
+            cleaned = _clean_destination(term).lower()
+            if cleaned and cleaned not in seen:
+                seen.add(cleaned)
+                result.append(cleaned)
+        return result
     terms = DESTINATION_MATCH_TERMS.get(normalized.lower(), [normalized.lower()])
     result: list[str] = []
     seen: set[str] = set()
@@ -77,14 +94,18 @@ def destination_match_terms(destination: str) -> list[str]:
 
 def destination_matches_text(destination: str, text: str) -> bool:
     haystack = str(text or "").lower()
+    normalized = normalize_destination(destination)
+    if "," in normalized:
+        parts = [part.strip().lower() for part in normalized.split(",", 1)]
+        city = parts[0] if parts else ""
+        country = parts[1] if len(parts) > 1 else ""
+        if city and country:
+            city_terms = DESTINATION_MATCH_TERMS.get(city, [city])
+            return any(term in haystack for term in city_terms) and country in haystack
     return any(term in haystack for term in destination_match_terms(destination))
 
 
 def _clean_destination(destination: str) -> str:
     value = re.sub(r"\s+", " ", str(destination or "")).strip()
     value = value.strip(".,;:!?")
-    if "," in value:
-        city, _rest = value.split(",", 1)
-        if city.strip():
-            value = city.strip()
     return value

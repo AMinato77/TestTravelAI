@@ -42,33 +42,28 @@ def evaluate_activities(
 
     # GPT only receives a short, clean version of each candidate. It is not
     # allowed to invent new places; it only decides keep/remove + score.
-    try:
-        data = generate_json(
-            system_prompt=(
-                "You are an Activity Evaluation Agent for a travel planner. "
-                "Your job is to judge whether each provided activity is a meaningful fit "
-                "for the user's destination, concrete wishes, preference notes, avoid preferences, budget, and travel style. "
-                "Do not invent new activities. Only evaluate activities from the input list. "
-                "The destination match and concrete user wishes are critical. "
-                "Remove candidates that are in another city/country or only weakly match a required theme. "
-                "Be strict: if an activity only incidentally mentions an interest but its main category "
-                "does not match, give it a low score or keep=false. "
-                "Return strict JSON with key evaluations. evaluations is a list with keys: "
-                "name, keep, score, reason. score must be 0-10."
-            ),
-            payload={
-                "destination": destination,
-                "budget": budget,
-                "profile": profile.to_dict(),
-                "constraints": constraints,
-                "activities": activity_payload,
-            },
-            model_env="OPENAI_ACTIVITY_EVALUATION_MODEL",
-        )
-    except Exception as exc:
-        kept, report = _demo_evaluate_activities(activities, profile, limit)
-        report["fallback_reason"] = f"Activity Evaluation Agent fallback used because AI JSON parsing failed: {exc}"
-        return kept, report
+    data = generate_json(
+        system_prompt=(
+            "You are an Activity Evaluation Agent for a travel planner. "
+            "Your job is to judge whether each provided activity is a meaningful fit "
+            "for the user's destination, concrete wishes, preference notes, avoid preferences, budget, and travel style. "
+            "Do not invent new activities. Only evaluate activities from the input list. "
+            "The destination match and concrete user wishes are critical. "
+            "Remove candidates that are in another city/country or only weakly match a required theme. "
+            "Be strict: if an activity only incidentally mentions an interest but its main category "
+            "does not match, give it a low score or keep=false. "
+            "Return strict JSON with key evaluations. evaluations is a list with keys: "
+            "name, keep, score, reason. score must be 0-10."
+        ),
+        payload={
+            "destination": destination,
+            "budget": budget,
+            "profile": profile.to_dict(),
+            "constraints": constraints,
+            "activities": activity_payload,
+        },
+        model_env="OPENAI_ACTIVITY_EVALUATION_MODEL",
+    )
 
     evaluations = _parse_evaluations(data.get("evaluations", []))
     kept, report = _apply_evaluations(activities, evaluations, limit, profile, constraints)
