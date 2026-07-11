@@ -20,7 +20,14 @@ load_dotenv(ROOT / ".env", override=True)
 from app.agents.request_agent import parse_travel_request
 from app.models.preference_source import PreferenceSource
 from app.models.travel_request import TravelRequest
-from app.orchestrator import TravelPlanResult, build_travel_plan, revise_travel_plan
+from app.orchestrator import (
+    PreparedPlanContext,
+    TravelPlanResult,
+    expand_interactive_plan,
+    finalize_interactive_plan,
+    prepare_interactive_plan,
+    revise_travel_plan,
+)
 from app.rag.memory_retrieval import delete_user_memory_sources
 from app.rag.user_memory import create_user_profile, list_user_ids, load_user_profile
 from app.services.serialization import itinerary_to_dict, validation_to_dict
@@ -231,6 +238,10 @@ def _render_sidebar(profile) -> dict[str, Any]:
         st.session_state.last_parsed_request = None
         st.session_state.last_inputs = {}
         st.session_state.plan_versions = []
+        st.session_state.prepared_context = None
+        st.session_state.pending_conflict_result = None
+        st.session_state.pending_conflict_decisions = {}
+        st.session_state.planning_stage = "INPUT"
         st.rerun()
 
     return {
@@ -298,10 +309,10 @@ def _render_ai_view(profile, sidebar_state: dict[str, Any], result: TravelPlanRe
         avoid_labels = st.multiselect("Optionale Avoid-Tags", AVOID_TAG_CHOICES)
         recommend_destination = st.toggle("Reiseziel empfehlen lassen", value=False)
 
-        submitted = st.form_submit_button("Reiseplan erstellen", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Reise vorbereiten", type="primary", use_container_width=True)
 
     if submitted:
-        _run_initial_plan(
+        _run_prepare_plan(
             profile=profile,
             sidebar_state=sidebar_state,
             request_text=request_text,
@@ -318,14 +329,19 @@ def _render_ai_view(profile, sidebar_state: dict[str, Any], result: TravelPlanRe
             recommend_destination=recommend_destination,
         )
 
-    if result:
+    prepared = st.session_state.get("prepared_context")
+    if st.session_state.get("planning_stage") == "CONFLICT_REVIEW" and st.session_state.get("pending_conflict_result"):
+        _render_budget_conflict_review()
+    elif prepared:
+        _render_interactive_planning(prepared)
+    elif result:
         st.markdown("### Letzter Stand")
         _render_ai_summary(result)
     else:
         _render_empty_state(profile, sidebar_state)
 
 
-def _run_initial_plan(
+def _run_prepare_plan(
     profile,
     sidebar_state: dict[str, Any],
     request_text: str,
@@ -340,7 +356,7 @@ def _run_initial_plan(
     interest_tags: list[str],
     avoid_tags: list[str],
     recommend_destination: bool,
-) -> None:
+    ) -> None:
     fallback = TravelRequest(
         destination=destination,
         destination_scope=destination_scope,
@@ -353,7 +369,14 @@ def _run_initial_plan(
         query_hints=[],
         travel_style=travel_style,
     )
-    briefing = "\n".join(part for part in [request_text, f"Must-have: {must_have_text}", f"Vermeiden: {avoid_text}"] if part.strip())
+    briefing_parts = [request_text]
+    if must_have_text.strip():
+        briefing_parts.append(f"Must-have: {must_have_text}")
+    if avoid_text.strip() or avoid_tags:
+        avoid_briefing = ", ".join([avoid_text.strip(), *avoid_tags]).strip(" ,")
+        if avoid_briefing:
+            briefing_parts.append(f"Vermeiden: {avoid_briefing}")
+    briefing = "\n".join(part for part in briefing_parts if part.strip())
     try:
         parsed = parse_travel_request(briefing, fallback)
         effective_must_have = _merge_unique(_parse_list(must_have_text), parsed.must_have)
@@ -367,8 +390,8 @@ def _run_initial_plan(
         )
         preference_sources.extend(sidebar_state.get("gmail_sources") or [])
 
-        with st.spinner("Agenten-Workflow wird ausgefuehrt..."):
-            result = build_travel_plan(
+        with st.spinner("TravelAI recherchiert echte Orte und bereitet Rueckfragen vor..."):
+            prepared = prepare_interactive_plan(
                 user_id=st.session_state.user_id,
                 destination=parsed.destination,
                 days=parsed.duration_days,
@@ -391,7 +414,9 @@ def _run_initial_plan(
         st.error(f"Planung fehlgeschlagen: {exc}")
         return
 
-    st.session_state.last_result = result
+    st.session_state.prepared_context = prepared
+    st.session_state.planning_stage = "PREVIEW"
+    st.session_state.last_result = None
     st.session_state.last_parsed_request = parsed
     st.session_state.last_inputs = {
         "request_text": request_text,
@@ -408,9 +433,337 @@ def _run_initial_plan(
         "interest_tags": effective_tags,
         "query_hints": effective_query_hints,
     }
-    st.session_state.plan_versions = [{"version": 1, "label": "Erstplan", "feedback": ""}]
-    st.session_state.pending_main_view = "Reiseplan"
+    st.session_state.plan_versions = []
+    st.session_state.pending_conflict_result = None
+    st.session_state.pending_conflict_decisions = {}
     st.rerun()
+
+
+def _render_interactive_planning(prepared: PreparedPlanContext) -> None:
+    request = prepared.request
+    st.markdown("### Interaktive Planung")
+    col_1, col_2, col_3, col_4 = st.columns(4)
+    col_1.metric("Ziel", request.destination or "-")
+    col_2.metric("Tage", request.duration_days)
+    col_3.metric("Budget", _format_currency(request.budget))
+    col_4.metric("Kandidaten", len(prepared.activities))
+
+    st.markdown(
+        _info_panel(
+            "Recherche abgeschlossen",
+            "TravelAI hat die Anfrage verstanden, Memory und Tools genutzt und echte Google-Places-Kandidaten gesammelt. Jetzt kannst du den Plan wie im Reisebuero beeinflussen.",
+        ),
+        unsafe_allow_html=True,
+    )
+
+    if request.must_have:
+        st.markdown("**Erkannte Wuensche**")
+        st.markdown(_render_tags(request.must_have, "accent"), unsafe_allow_html=True)
+    if prepared.weather:
+        st.caption(str(prepared.weather.get("summary") or "Wetterdaten geladen."))
+
+    st.markdown("#### Rueckfragen")
+    answers: dict[str, str] = {}
+    if prepared.questions:
+        for question in prepared.questions:
+            options = question.get("options") or []
+            labels = [str(option.get("label")) for option in options]
+            default_index = 0
+            selected = st.radio(
+                str(question.get("question") or question.get("title") or "Auswahl"),
+                labels,
+                index=default_index,
+                horizontal=True,
+                key=f"interactive_question_{question.get('id')}",
+            )
+            selected_option = next((option for option in options if option.get("label") == selected), options[0] if options else {})
+            if selected_option.get("note"):
+                st.caption(str(selected_option.get("note")))
+            if selected_option.get("value"):
+                answers[str(question.get("id"))] = str(selected_option.get("value"))
+            if question.get("context"):
+                st.caption("Betrifft: " + ", ".join(str(item) for item in question.get("context") or []))
+    else:
+        st.caption("Keine zwingende Rueckfrage erkannt. Du kannst trotzdem Kandidaten markieren.")
+
+    st.markdown("#### Kandidaten-Vorschau")
+    candidate_actions: dict[str, str] = {}
+    for activity in prepared.activities[:12]:
+        candidate_actions[activity.name] = _render_candidate_card(activity)
+    if len(prepared.activities) > 12:
+        st.caption(f"{len(prepared.activities) - 12} weitere Kandidaten bleiben im Pool, werden hier aber nicht alle angezeigt.")
+
+    with st.container(border=True):
+        st.markdown("**Fehlt noch etwas?**")
+        expansion_text = st.text_input(
+            "Schreibe, was TravelAI noch suchen soll",
+            placeholder="z. B. Mir fehlt noch mehr Architektur, bitte 2-3 passende Orte suchen.",
+            key="interactive_expansion_text",
+        )
+        if st.button("Weitere Kandidaten suchen", disabled=not expansion_text.strip(), use_container_width=True):
+            decisions = _collect_interactive_decisions(candidate_actions, answers)
+            try:
+                removed_before_search = len(decisions.get("exclude_names", [])) + len(decisions.get("already_visited_names", []))
+                with st.spinner("TravelAI sucht gezielt weitere echte Places-Kandidaten..."):
+                    expanded = expand_interactive_plan(prepared, expansion_text, decisions)
+                st.session_state.prepared_context = expanded
+                added = max(0, len(expanded.activities) - len(prepared.activities) + removed_before_search)
+                if added > 0:
+                    st.success(f"{added} neue Kandidat(en) hinzugefuegt.")
+                elif removed_before_search > 0:
+                    st.success(f"{removed_before_search} markierte Kandidat(en) entfernt.")
+                else:
+                    st.warning("Keine neuen Kandidaten gefunden. Du kannst die Suchbeschreibung konkreter formulieren.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Nachsuche fehlgeschlagen: {exc}")
+
+    col_a, col_b = st.columns([1, 1])
+    with col_a:
+        if st.button("Finalen Plan mit meinen Entscheidungen erstellen", type="primary", use_container_width=True):
+            decisions = _collect_interactive_decisions(candidate_actions, answers)
+            try:
+                with st.spinner("Planning Agent erstellt finalen Plan, Validation prueft danach..."):
+                    result = finalize_interactive_plan(prepared, decisions)
+                _store_or_review_final_result(result, decisions)
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Finalisierung fehlgeschlagen: {exc}")
+    with col_b:
+        if st.button("Neue Recherche starten", use_container_width=True):
+            st.session_state.prepared_context = None
+            st.session_state.planning_stage = "INPUT"
+            st.session_state.pending_conflict_result = None
+            st.session_state.pending_conflict_decisions = {}
+            st.rerun()
+
+
+def _render_candidate_card(activity) -> str:
+    with st.container(border=True):
+        top = st.columns([1.4, 0.7])
+        with top[0]:
+            st.markdown(f"**{html.escape(activity.name)}**")
+            st.caption(_category_label(activity.category))
+        with top[1]:
+            meta = []
+            if activity.cost:
+                meta.append(_format_currency(activity.cost))
+            if activity.duration_hours:
+                meta.append(f"{activity.duration_hours:g} h")
+            if meta:
+                st.caption(" | ".join(meta))
+        if activity.description:
+            st.caption(_compact_description(activity.description, 190))
+        return st.radio(
+            "Entscheidung",
+            ["Neutral", "Unbedingt einplanen", "Kenne ich schon", "Mehr davon", "Nicht mein Stil"],
+            horizontal=True,
+            key=f"candidate_action_{_safe_widget_key(activity.name)}",
+            label_visibility="collapsed",
+        )
+
+
+def _collect_interactive_decisions(candidate_actions: dict[str, str], answers: dict[str, str]) -> dict:
+    decisions = {
+        "answers": answers,
+        "include_names": [],
+        "exclude_names": [],
+        "already_visited_names": [],
+        "more_like_names": [],
+    }
+    for name, action in candidate_actions.items():
+        if action == "Unbedingt einplanen":
+            decisions["include_names"].append(name)
+        elif action == "Kenne ich schon":
+            decisions["already_visited_names"].append(name)
+        elif action == "Mehr davon":
+            decisions["more_like_names"].append(name)
+        elif action == "Nicht mein Stil":
+            decisions["exclude_names"].append(name)
+    return decisions
+
+
+def _render_budget_conflict_review() -> None:
+    result: TravelPlanResult | None = st.session_state.get("pending_conflict_result")
+    prepared: PreparedPlanContext | None = st.session_state.get("prepared_context")
+    decisions = st.session_state.get("pending_conflict_decisions") or {}
+    if not result or not prepared:
+        st.session_state.planning_stage = "PREVIEW" if prepared else "INPUT"
+        st.session_state.pending_conflict_result = None
+        st.session_state.pending_conflict_decisions = {}
+        st.rerun()
+        return
+
+    budget = float(prepared.request.budget or 0)
+    total = float(result.itinerary.total_cost or 0)
+    over = max(0.0, total - budget)
+    included = _decision_name_set(decisions, "include_names")
+    included_cost = sum(activity.cost for _day, _index, activity in _planned_activity_rows(result) if _activity_key(activity.name) in included)
+
+    st.markdown("### Budget-Konflikt")
+    st.markdown(
+        _info_panel(
+            "Rueckfrage vor dem finalen Plan",
+            "Deine fest ausgewaehlten Aktivitaeten werden respektiert. Dadurch kann der vorlaeufige Plan aber Budget oder Tagesumfang verletzen. Entscheide jetzt, wie TravelAI weiter planen soll.",
+        ),
+        unsafe_allow_html=True,
+    )
+    col_1, col_2, col_3, col_4 = st.columns(4)
+    col_1.metric("Budget", _format_currency(budget, result.itinerary.currency))
+    col_2.metric("Vorlaeufig geplant", _format_currency(total, result.itinerary.currency))
+    col_3.metric("Ueberschreitung", _format_currency(over, result.itinerary.currency))
+    col_4.metric("Fest markiert", _format_currency(included_cost, result.itinerary.currency))
+
+    st.warning(
+        "Der Plan ueberschreitet das Budget, weil mehrere Aktivitaeten als 'Unbedingt einplanen' markiert sind. "
+        "Diese bleiben geschuetzt, bis du selbst etwas anderes entscheidest."
+    )
+
+    rows = _planned_activity_rows(result)
+    with st.container(border=True):
+        st.markdown("**Aktivitaeten im vorlaeufigen Plan**")
+        for day, index, activity in rows:
+            key = _activity_key(activity.name)
+            protected = key in included
+            cols = st.columns([0.12, 1.2, 0.45, 0.45])
+            keep = cols[0].checkbox(
+                "behalten",
+                value=True,
+                key=f"budget_keep_{day}_{index}_{_safe_widget_key(activity.name)}",
+                label_visibility="collapsed",
+            )
+            title = f"**{html.escape(activity.name)}**"
+            if protected:
+                title += " " + _pill("Unbedingt", "accent")
+            cols[1].markdown(title, unsafe_allow_html=True)
+            cols[1].caption(_category_label(activity.category))
+            cols[2].caption(_format_currency(activity.cost, result.itinerary.currency))
+            cols[3].caption(f"Tag {day}")
+            st.session_state[f"budget_keep_value_{day}_{index}_{_safe_widget_key(activity.name)}"] = keep
+
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        if st.button("Trotzdem uebernehmen", type="primary", use_container_width=True):
+            _complete_final_plan(result, label="Budget bewusst ueberschritten")
+            st.rerun()
+
+    with col_b:
+        disabled = included_cost > budget > 0
+        if st.button("Budget automatisch einhalten", disabled=disabled, use_container_width=True):
+            reduced_decisions = _decisions_for_auto_budget_reduction(result, decisions, budget)
+            try:
+                with st.spinner("TravelAI reduziert nur nicht-priorisierte Aktivitaeten und validiert neu..."):
+                    reduced = finalize_interactive_plan(prepared, reduced_decisions)
+                _store_or_review_final_result(reduced, reduced_decisions)
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Budget-Reduktion fehlgeschlagen: {exc}")
+        if disabled:
+            st.caption("Automatisch nicht moeglich: Die fest markierten Aktivitaeten liegen bereits ueber dem Budget.")
+
+    with col_c:
+        if st.button("Meine Auswahl neu planen", use_container_width=True):
+            revised = _decisions_from_budget_selection(result, decisions)
+            try:
+                with st.spinner("TravelAI plant mit deiner Budget-Auswahl neu..."):
+                    replanned = finalize_interactive_plan(prepared, revised)
+                _store_or_review_final_result(replanned, revised)
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Neuplanung fehlgeschlagen: {exc}")
+
+    if st.button("Zurueck zur Kandidaten-Auswahl", use_container_width=True):
+        st.session_state.planning_stage = "PREVIEW"
+        st.session_state.pending_conflict_result = None
+        st.session_state.pending_conflict_decisions = {}
+        st.rerun()
+
+
+def _store_or_review_final_result(result: TravelPlanResult, decisions: dict) -> None:
+    if _has_budget_exceeded(result):
+        st.session_state.pending_conflict_result = result
+        st.session_state.pending_conflict_decisions = decisions
+        st.session_state.planning_stage = "CONFLICT_REVIEW"
+        st.session_state.pending_main_view = "KI"
+        return
+    _complete_final_plan(result, label="Interaktiver Erstplan")
+
+
+def _complete_final_plan(result: TravelPlanResult, label: str = "Interaktiver Erstplan") -> None:
+    st.session_state.last_result = result
+    st.session_state.plan_versions = [{"version": 1, "label": label, "feedback": ""}]
+    st.session_state.prepared_context = None
+    st.session_state.pending_conflict_result = None
+    st.session_state.pending_conflict_decisions = {}
+    st.session_state.planning_stage = "COMPLETED"
+    st.session_state.pending_main_view = "Reiseplan"
+
+
+def _has_budget_exceeded(result: TravelPlanResult) -> bool:
+    return any(issue.issue_type == "budget_exceeded" for issue in result.validation.issues)
+
+
+def _planned_activity_rows(result: TravelPlanResult) -> list[tuple[int, int, Any]]:
+    rows: list[tuple[int, int, Any]] = []
+    for day in result.itinerary.days:
+        for index, activity in enumerate(day.activities):
+            rows.append((day.day, index, activity))
+    return rows
+
+
+def _decisions_for_auto_budget_reduction(result: TravelPlanResult, decisions: dict, budget: float) -> dict:
+    revised = _copy_decisions(decisions)
+    included = _decision_name_set(revised, "include_names")
+    total = float(result.itinerary.total_cost or 0)
+    removable = [
+        activity
+        for _day, _index, activity in _planned_activity_rows(result)
+        if _activity_key(activity.name) not in included
+    ]
+    removable.sort(key=lambda activity: (activity.cost, activity.duration_hours), reverse=True)
+    for activity in removable:
+        if total <= budget:
+            break
+        revised["exclude_names"] = _merge_unique(revised.get("exclude_names") or [], [activity.name])
+        total -= float(activity.cost or 0)
+    return _remove_excluded_from_positive_decisions(revised)
+
+
+def _decisions_from_budget_selection(result: TravelPlanResult, decisions: dict) -> dict:
+    revised = _copy_decisions(decisions)
+    removed: list[str] = []
+    for day, index, activity in _planned_activity_rows(result):
+        keep = st.session_state.get(f"budget_keep_value_{day}_{index}_{_safe_widget_key(activity.name)}", True)
+        if not keep:
+            removed.append(activity.name)
+    if removed:
+        revised["exclude_names"] = _merge_unique(revised.get("exclude_names") or [], removed)
+    return _remove_excluded_from_positive_decisions(revised)
+
+
+def _remove_excluded_from_positive_decisions(decisions: dict) -> dict:
+    blocked = _decision_name_set(decisions, "exclude_names") | _decision_name_set(decisions, "already_visited_names")
+    for key in ("include_names", "more_like_names"):
+        decisions[key] = [name for name in decisions.get(key, []) if _activity_key(name) not in blocked]
+    return decisions
+
+
+def _copy_decisions(decisions: dict) -> dict:
+    return {
+        "answers": dict(decisions.get("answers") or {}) if isinstance(decisions, dict) else {},
+        "include_names": list((decisions or {}).get("include_names") or []),
+        "exclude_names": list((decisions or {}).get("exclude_names") or []),
+        "already_visited_names": list((decisions or {}).get("already_visited_names") or []),
+        "more_like_names": list((decisions or {}).get("more_like_names") or []),
+    }
+
+
+def _decision_name_set(decisions: dict, key: str) -> set[str]:
+    return {_activity_key(name) for name in (decisions or {}).get(key, []) if str(name).strip()}
+
+
+def _activity_key(name: str) -> str:
+    return " ".join(str(name or "").strip().lower().split())
 
 
 def _render_empty_state(profile, sidebar_state: dict[str, Any]) -> None:
@@ -567,6 +920,14 @@ def _render_tech_view(
         "gmail_sources": [_source_to_dict(source) for source in sidebar_state.get("gmail_sources", [])],
         "plan_versions": st.session_state.get("plan_versions", []),
     }
+    prepared = st.session_state.get("prepared_context")
+    if prepared:
+        payload["prepared_context"] = {
+            "request": _request_to_dict(prepared.request),
+            "candidate_count": len(prepared.activities),
+            "questions": prepared.questions,
+            "tool_workflow": prepared.agentic_tool_workflow,
+        }
     if result:
         payload["result"] = _result_to_dict(result)
 
@@ -580,8 +941,11 @@ def _render_tech_view(
 
     with st.expander("Umgebung", expanded=True):
         st.json(payload["environment"])
-    with st.expander("Parsed Request", expanded=True):
-        st.json(payload["parsed_request"])
+        with st.expander("Parsed Request", expanded=True):
+            st.json(payload["parsed_request"])
+    if prepared:
+        with st.expander("Prepared Interactive Context", expanded=True):
+            st.json(payload["prepared_context"])
     if result:
         with st.expander("Query Planning", expanded=True):
             st.json(
@@ -634,6 +998,10 @@ def _init_state() -> None:
     st.session_state.setdefault("last_parsed_request", None)
     st.session_state.setdefault("last_inputs", {})
     st.session_state.setdefault("plan_versions", [])
+    st.session_state.setdefault("prepared_context", None)
+    st.session_state.setdefault("pending_conflict_result", None)
+    st.session_state.setdefault("pending_conflict_decisions", {})
+    st.session_state.setdefault("planning_stage", "INPUT")
     st.session_state.setdefault("main_view", "KI")
     st.session_state.setdefault("gmail_sources", [])
     st.session_state.setdefault("gmail_messages", [])
@@ -829,6 +1197,11 @@ def _value_for_label(label: str, choices: list[tuple[str, str]]) -> str:
 
 def _safe_user_id(value: str) -> str:
     return "".join(char for char in str(value).strip() if char.isalnum() or char in ("-", "_"))
+
+
+def _safe_widget_key(value: str) -> str:
+    cleaned = "".join(char if char.isalnum() else "_" for char in str(value).strip().lower())
+    return cleaned[:80] or "item"
 
 
 def _category_label(category: str) -> str:

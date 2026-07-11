@@ -79,12 +79,11 @@ def _request_from_data(data: dict, raw_text: str, fallback: TravelRequest) -> Tr
         or _asks_for_destination_recommendation(raw_text)
         or (scope in {"country", "region", "open"} and _asks_for_destination_recommendation(raw_text))
     )
-    parsed_must_have = _as_list(data.get("must_have"))
+    parsed_must_have = _clean_must_have_terms(_as_list(data.get("must_have")), destination)
     parsed_avoid = _as_list(data.get("avoid"))
     must_have = _merge_unique(parsed_must_have or _fallback_must_have(raw_text))
     avoid = _clean_avoid_terms(_merge_unique(parsed_avoid or _fallback_avoid(raw_text), fallback.avoid))
     query_hints = _merge_unique(_as_list(data.get("query_hints")), must_have)
-    must_have = _merge_unique(must_have, _distinct_tag_query_requirements(data.get("interest_tags"), query_hints, must_have))
     return TravelRequest(
         destination=destination,
         destination_scope=scope,
@@ -257,6 +256,28 @@ def _as_list(value) -> list[str]:
 
 def _clean_tags(value) -> list[str]:
     return _merge_unique(_as_list(value))
+
+
+def _clean_must_have_terms(values: list[str], destination: str = "") -> list[str]:
+    cleaned_values: list[str] = []
+    destination_tokens = set(_content_tokens(destination))
+    blocked_prefixes = ("must-have:", "must have:", "vermeiden:", "avoid:")
+    for value in _as_list(values):
+        cleaned = " ".join(str(value).strip().split())
+        lower = cleaned.lower()
+        for prefix in blocked_prefixes:
+            if lower.startswith(prefix):
+                cleaned = cleaned[len(prefix) :].strip()
+                lower = cleaned.lower()
+        if not cleaned:
+            continue
+        if lower in {"vermeiden", "avoid", "must-have", "must have"}:
+            continue
+        tokens = set(_content_tokens(cleaned))
+        if destination_tokens and tokens and tokens <= destination_tokens:
+            continue
+        cleaned_values.append(cleaned)
+    return _merge_unique(cleaned_values)
 
 
 def _distinct_tag_query_requirements(tags, query_hints: list[str], must_have: list[str]) -> list[str]:

@@ -54,6 +54,23 @@ class TravelPlanResult:
     revision: dict | None = None
 
 
+@dataclass(slots=True)
+class PreparedPlanContext:
+    request: TravelRequest
+    profile: UserProfile
+    loaded_memory: UserProfile
+    activities: list[Activity]
+    weather: dict
+    workflow_steps: list[str]
+    activity_evaluation: dict
+    memory_context: list[PreferenceSource]
+    agentic_tool_workflow: dict
+    place_queries: list[PlaceQuery]
+    query_planning: dict
+    constraints: dict
+    questions: list[dict]
+
+
 def build_travel_plan(
     user_id: str,
     destination: str,
@@ -69,7 +86,7 @@ def build_travel_plan(
     must_have: list[str] | None = None,
     interest_tags: list[str] | None = None,
     query_hints: list[str] | None = None,
-) -> TravelPlanResult:
+    ) -> TravelPlanResult:
     load_dotenv()
     reset_openai_usage_records()
     workflow_steps = ["Started adaptive travel planning workflow."]
@@ -306,6 +323,447 @@ def build_travel_plan(
     )
 
 
+def prepare_interactive_plan(
+    user_id: str,
+    destination: str,
+    days: int,
+    budget: float,
+    travel_style: str = "balanced",
+    budget_preference: str = "medium",
+    feedback: str | None = None,
+    preference_sources: list[PreferenceSource] | None = None,
+    manual_avoid: list[str] | None = None,
+    destination_scope: str = "city",
+    needs_destination_recommendation: bool = False,
+    must_have: list[str] | None = None,
+    interest_tags: list[str] | None = None,
+    query_hints: list[str] | None = None,
+) -> PreparedPlanContext:
+    """Run the real research/tool phase and pause before final itinerary planning."""
+
+    load_dotenv()
+    reset_openai_usage_records()
+    workflow_steps = ["Started interactive travel planning preparation."]
+
+    request = TravelRequest(
+        destination=destination,
+        destination_scope=destination_scope,
+        needs_destination_recommendation=needs_destination_recommendation,
+        duration_days=days,
+        budget=budget,
+        must_have=_merge_unique(must_have or []),
+        avoid=_merge_unique(manual_avoid or []),
+        interest_tags=_merge_unique(interest_tags or []),
+        query_hints=_merge_unique(query_hints or [], must_have or []),
+        travel_style=travel_style,
+    )
+
+    destination_decision = resolve_destination(request)
+    original_destination = request.destination
+    request.destination = normalize_destination(str(destination_decision.get("destination") or request.destination))
+    if destination_decision.get("changed"):
+        workflow_steps.append(f"Destination Decision Agent selected {request.destination} for '{original_destination}'.")
+    else:
+        workflow_steps.append(destination_decision.get("summary", "Destination Decision Agent kept the requested destination."))
+
+    memory_profile = load_user_profile(user_id)
+    workflow_steps.append(f"Loaded ChromaDB profile memory for user_id={user_id}.")
+
+    new_sources = preference_sources or []
+    saved_sources = load_preference_sources(user_id)
+    all_sources = [*saved_sources, *new_sources]
+    workflow_steps.append(f"Loaded {len(saved_sources)} stored memory chunk(s) and {len(new_sources)} new source(s).")
+
+    if new_sources:
+        try:
+            chunk_count = ingest_preference_sources(user_id, new_sources)
+            workflow_steps.append(f"Stored {chunk_count} new embedded memory chunk(s) in ChromaDB.")
+        except Exception as exc:
+            workflow_steps.append(f"New memory sources were not embedded because ChromaDB/embeddings failed: {exc}")
+
+    memory_context: list[PreferenceSource] = []
+    try:
+        memory_query = build_memory_query(
+            destination=request.destination,
+            query_terms=request.query_hints or request.must_have or request.interest_tags,
+            avoid=request.avoid,
+            travel_style=request.travel_style,
+        )
+        retrieved_memory = retrieve_user_memory(user_id, memory_query)
+        memory_context = [memory.source for memory in retrieved_memory]
+        workflow_steps.append(f"ChromaDB semantic retrieval returned {len(memory_context)} memory chunk(s).")
+    except Exception as exc:
+        workflow_steps.append(f"Memory RAG skipped because ChromaDB/embeddings failed: {exc}")
+
+    preference_context = [*memory_context, *new_sources] or all_sources
+    extracted_profile = extract_preferences(
+        request=request,
+        budget_preference=budget_preference,
+        preference_sources=preference_context,
+    )
+    workflow_steps.append("Preference Agent summarized natural-language memory for query planning.")
+
+    profile = update_user_profile(
+        existing=memory_profile,
+        extracted=extracted_profile,
+        destination=request.destination,
+        current_interest_tags=request.interest_tags,
+        manual_avoid=request.avoid,
+        feedback=feedback,
+        uploaded_sources=[source.name for source in new_sources],
+        replace_existing_tags=bool(request.interest_tags),
+    )
+    workflow_steps.append("Saved updated user profile as embedded ChromaDB memory.")
+
+    place_queries, query_planning = plan_place_queries(request, memory_context)
+    workflow_steps.append(f"Query Planning Agent produced {len(place_queries)} concrete Google Places query/queries.")
+
+    agentic_preplan = run_agentic_planning_workflow(
+        destination=request.destination,
+        days=request.duration_days,
+        budget=request.budget,
+        profile=profile,
+        place_queries=place_queries,
+        avoid=profile.avoid,
+        must_have=request.must_have,
+        query_hints=request.query_hints,
+        memory_context=memory_context,
+    )
+    external_activities = agentic_preplan.activities
+    weather = agentic_preplan.weather
+    agentic_tool_workflow = agentic_preplan.workflow
+    workflow_steps.append(agentic_tool_workflow.get("summary", "Agentic tool workflow inspected planning inputs."))
+    for call in (agentic_tool_workflow.get("tool_calls") or [])[:5]:
+        workflow_steps.append(f"Tool decision: {call.get('tool')} - {call.get('decision')}")
+    workflow_steps.append(f"Google Places returned {len(external_activities)} candidate(s).")
+
+    activities_before_filter = _deduplicate_activities(external_activities)
+    activities, hard_removed_activities = _split_avoided_activities(activities_before_filter, profile.avoid)
+    if hard_removed_activities:
+        workflow_steps.append(f"Removed {len(hard_removed_activities)} candidate(s) because of avoid constraints.")
+
+    constraints = {
+        "destination": request.destination,
+        "must_have": request.must_have,
+        "query_hints": request.query_hints,
+        "avoid": profile.avoid,
+        "destination_decision": destination_decision,
+        "interactive": True,
+    }
+    evaluated_activities, activity_evaluation = evaluate_activities(
+        destination=request.destination,
+        activities=activities,
+        profile=profile,
+        budget=request.budget,
+        constraints={**constraints, "duration_days": request.duration_days},
+    )
+    if evaluated_activities:
+        activities = evaluated_activities
+    if hard_removed_activities:
+        activity_evaluation["removed"] = [
+            *_removed_activity_payload(hard_removed_activities),
+            *(activity_evaluation.get("removed") or []),
+        ]
+    workflow_steps.append(
+        f"Activity Evaluation Agent kept {len(activities)} candidate(s) and removed {len(activity_evaluation.get('removed', []))} weak match(es)."
+    )
+    agentic_tool_workflow["activity_evaluation"] = {
+        "kept_candidates": len(activities),
+        "removed_candidates": len(activity_evaluation.get("removed", [])),
+    }
+    workflow_steps.append("Interactive pause: candidate preview and user decisions are now available.")
+
+    questions = _build_interactive_questions(request, activities, weather, agentic_tool_workflow)
+
+    return PreparedPlanContext(
+        request=request,
+        profile=profile,
+        loaded_memory=memory_profile,
+        activities=activities,
+        weather=weather,
+        workflow_steps=workflow_steps,
+        activity_evaluation=activity_evaluation,
+        memory_context=memory_context,
+        agentic_tool_workflow=agentic_tool_workflow,
+        place_queries=place_queries,
+        query_planning=query_planning,
+        constraints=constraints,
+        questions=questions,
+    )
+
+
+def finalize_interactive_plan(
+    prepared_context: PreparedPlanContext,
+    user_decisions: dict | None = None,
+) -> TravelPlanResult:
+    """Build, validate, optimize and explain a plan after the user has shaped the candidate pool."""
+
+    decisions = _merge_interactive_decisions(
+        prepared_context.constraints.get("interactive_decisions") if isinstance(prepared_context.constraints, dict) else {},
+        user_decisions or {},
+    )
+    request = deepcopy(prepared_context.request)
+    profile = deepcopy(prepared_context.profile)
+    workflow_steps = [
+        *prepared_context.workflow_steps,
+        "User confirmed interactive planning decisions.",
+    ]
+    activities = _apply_interactive_decisions(prepared_context.activities, profile, decisions)
+    if len(activities) != len(prepared_context.activities):
+        workflow_steps.append(f"Interactive filter kept {len(activities)} of {len(prepared_context.activities)} candidate(s).")
+
+    constraints = deepcopy(prepared_context.constraints)
+    constraints["avoid"] = profile.avoid
+    constraints["interactive_decisions"] = _compact_interactive_decisions(decisions)
+
+    itinerary = plan_itinerary(
+        request.destination,
+        request.duration_days,
+        request.budget,
+        activities,
+        prepared_context.weather,
+        profile,
+        constraints=constraints,
+    )
+    workflow_steps.append("Planning Agent generated the final itinerary from interactive decisions.")
+    coverage_notes = _repair_must_have_coverage(itinerary, activities, request.must_have)
+    if coverage_notes:
+        workflow_steps.append(f"Coverage guard adjusted the final itinerary: {'; '.join(coverage_notes)}")
+    include_notes = _repair_interactive_includes(itinerary, activities, decisions)
+    if include_notes:
+        workflow_steps.append(f"Interactive include guard adjusted the final itinerary: {'; '.join(include_notes)}")
+    repair_notes = _enforce_hard_activity_constraints(itinerary, profile.avoid)
+    if repair_notes:
+        workflow_steps.append(f"Hard constraint guard repaired the final itinerary: {'; '.join(repair_notes)}")
+
+    validation_workflow_result = run_agentic_validation_workflow(
+        itinerary=itinerary,
+        budget=request.budget,
+        weather=prepared_context.weather,
+        profile=profile,
+        constraints=constraints,
+    )
+    validation = validation_workflow_result.validation
+    agentic_tool_workflow = deepcopy(prepared_context.agentic_tool_workflow)
+    agentic_tool_workflow["validation_workflow"] = validation_workflow_result.workflow
+    agentic_tool_workflow["tool_calls"] = [
+        *(agentic_tool_workflow.get("tool_calls") or []),
+        *(validation_workflow_result.workflow.get("tool_calls") or []),
+    ]
+    initial_itinerary = deepcopy(itinerary)
+    initial_validation = deepcopy(validation)
+    workflow_steps.append(f"Validation found {len(validation.issues)} issue(s), including semantic request checks.")
+    workflow_steps.append(validation_workflow_result.workflow.get("summary", "Validation tool workflow completed."))
+
+    optimized = False
+    for attempt in range(1, 4):
+        if not _needs_optimization(validation):
+            break
+        previous_signature = _validation_signature(validation)
+        itinerary = optimize_itinerary(itinerary, activities, request.budget, prepared_context.weather, profile, constraints=constraints)
+        coverage_notes = _repair_must_have_coverage(itinerary, activities, request.must_have)
+        include_notes = _repair_interactive_includes(itinerary, activities, decisions)
+        repair_notes = _enforce_hard_activity_constraints(itinerary, profile.avoid)
+        validation = validate_itinerary(itinerary, request.budget, prepared_context.weather, profile, constraints=constraints)
+        optimized = True
+        workflow_steps.append(f"Optimization Agent adjusted the itinerary and validation ran again (attempt {attempt}).")
+        if coverage_notes:
+            workflow_steps.append(f"Coverage guard repaired optimizer output: {'; '.join(coverage_notes)}")
+        if include_notes:
+            workflow_steps.append(f"Interactive include guard repaired optimizer output: {'; '.join(include_notes)}")
+        if repair_notes:
+            workflow_steps.append(f"Hard constraint guard repaired optimizer output: {'; '.join(repair_notes)}")
+        if _validation_signature(validation) == previous_signature:
+            workflow_steps.append("Optimization stopped because remaining issues could not be changed by available tools.")
+            break
+
+    agentic_quality_review = run_agentic_quality_review(itinerary=itinerary, budget=request.budget, profile=profile, validation=validation)
+    workflow_steps.append(agentic_quality_review.get("summary", "Quality review completed."))
+
+    explanation = explain_travel_plan(
+        itinerary=itinerary,
+        profile=profile,
+        weather=prepared_context.weather,
+        activities=activities,
+        validation=validation,
+        optimized=optimized,
+        budget=request.budget,
+    )
+    workflow_steps.append("Explanation Agent generated the final explanation.")
+
+    places_metadata = prepared_context.agentic_tool_workflow.get("places_metadata") or {"query_count": len(prepared_context.place_queries), "cache_hits": 0}
+    tool_traces = [
+        trace_to_dict(
+            google_places_trace(
+                query_count=int(places_metadata.get("query_count") or 0),
+                cache_hits=int(places_metadata.get("cache_hits") or 0),
+            )
+        )
+    ]
+    for record in openai_usage_records():
+        tool_traces.append(
+            trace_to_dict(
+                openai_llm_trace(
+                    name=record.get("name") or "openai_llm_call",
+                    model=record.get("model") or "gpt-5-nano",
+                    input_tokens=int(record.get("input_tokens") or 0),
+                    output_tokens=int(record.get("output_tokens") or 0),
+                )
+            )
+        )
+
+    return TravelPlanResult(
+        profile=profile,
+        activities=activities,
+        weather=prepared_context.weather,
+        itinerary=itinerary,
+        validation=validation,
+        initial_itinerary=initial_itinerary,
+        initial_validation=initial_validation,
+        optimized=optimized,
+        loaded_memory=prepared_context.loaded_memory,
+        workflow_steps=workflow_steps,
+        explanation=explanation,
+        activity_evaluation=prepared_context.activity_evaluation,
+        memory_context=prepared_context.memory_context,
+        agentic_quality_review=agentic_quality_review,
+        agentic_tool_workflow=agentic_tool_workflow,
+        cost_report=estimate_tool_cost_report(tool_traces),
+        place_queries=prepared_context.place_queries,
+        query_planning=prepared_context.query_planning,
+    )
+
+
+def expand_interactive_plan(
+    prepared_context: PreparedPlanContext,
+    user_feedback: str,
+    user_decisions: dict | None = None,
+    limit: int = 6,
+) -> PreparedPlanContext:
+    """Add more real Places candidates during the interactive preview phase."""
+
+    feedback = " ".join(str(user_feedback or "").strip().split())
+    if not feedback:
+        return prepared_context
+
+    decisions = user_decisions or {}
+    profile = deepcopy(prepared_context.profile)
+    base_activities = _apply_interactive_decisions(prepared_context.activities, profile, decisions)
+    profile.preference_notes = _merge_unique(
+        profile.preference_notes,
+        [f"Interactive user request during candidate preview: {feedback}"],
+    )
+
+    request = prepared_context.request
+    queries = _select_interactive_expansion_queries(feedback, request.must_have, request.destination)
+    if not queries:
+        return prepared_context
+
+    activities, places_metadata = search_places_with_metadata(
+        destination=request.destination,
+        queries=queries,
+        avoid=profile.avoid,
+    )
+    existing_names = {activity.name.strip().lower() for activity in base_activities}
+    new_candidates = [
+        activity
+        for activity in _deduplicate_activities(activities)
+        if activity.name.strip().lower() not in existing_names
+    ][: max(1, int(limit))]
+
+    if not new_candidates:
+        workflow_steps = [
+            *prepared_context.workflow_steps,
+            f"Interactive expansion for '{feedback}' returned no new candidate(s).",
+        ]
+        return PreparedPlanContext(
+            request=prepared_context.request,
+            profile=profile,
+            loaded_memory=prepared_context.loaded_memory,
+            activities=base_activities,
+            weather=prepared_context.weather,
+            workflow_steps=workflow_steps,
+            activity_evaluation=prepared_context.activity_evaluation,
+            memory_context=prepared_context.memory_context,
+            agentic_tool_workflow=prepared_context.agentic_tool_workflow,
+            place_queries=[*prepared_context.place_queries, *queries],
+            query_planning={
+                **prepared_context.query_planning,
+                "interactive_expansion": {
+                    "feedback": feedback,
+                    "added_candidates": 0,
+                    "places_metadata": places_metadata,
+                },
+            },
+            constraints=prepared_context.constraints,
+            questions=prepared_context.questions,
+        )
+
+    evaluated, evaluation = evaluate_activities(
+        destination=request.destination,
+        activities=new_candidates,
+        profile=profile,
+        budget=request.budget,
+        constraints={**prepared_context.constraints, "interactive_feedback": feedback},
+    )
+    if evaluated:
+        new_candidates = evaluated[: max(1, int(limit))]
+
+    activities = _deduplicate_activities([*new_candidates, *base_activities])
+    workflow_steps = [
+        *prepared_context.workflow_steps,
+        f"Interactive expansion for '{feedback}' added {len(new_candidates)} candidate(s).",
+    ]
+    tool_workflow = deepcopy(prepared_context.agentic_tool_workflow)
+    tool_workflow.setdefault("interactive_expansions", [])
+    tool_workflow["interactive_expansions"].append(
+        {
+            "feedback": feedback,
+            "query_count": places_metadata.get("query_count"),
+            "queries": places_metadata.get("queries"),
+            "added_candidates": [activity.name for activity in new_candidates],
+        }
+    )
+
+    activity_evaluation = deepcopy(prepared_context.activity_evaluation)
+    activity_evaluation.setdefault("interactive_expansions", [])
+    activity_evaluation["interactive_expansions"].append(evaluation)
+
+    return PreparedPlanContext(
+        request=prepared_context.request,
+        profile=profile,
+        loaded_memory=prepared_context.loaded_memory,
+        activities=activities,
+        weather=prepared_context.weather,
+        workflow_steps=workflow_steps,
+        activity_evaluation=activity_evaluation,
+        memory_context=prepared_context.memory_context,
+        agentic_tool_workflow=tool_workflow,
+        place_queries=[*prepared_context.place_queries, *queries],
+        query_planning={
+            **prepared_context.query_planning,
+            "interactive_expansion": {
+                "feedback": feedback,
+                "added_candidates": len(new_candidates),
+                "places_metadata": places_metadata,
+            },
+        },
+        constraints={
+            **prepared_context.constraints,
+            "avoid": profile.avoid,
+            "interactive_feedback": _merge_unique(
+                prepared_context.constraints.get("interactive_feedback") or [],
+                [feedback],
+            ),
+            "interactive_decisions": _merge_interactive_decisions(
+                prepared_context.constraints.get("interactive_decisions") if isinstance(prepared_context.constraints, dict) else {},
+                decisions,
+            ),
+        },
+        questions=_build_interactive_questions(request, activities, prepared_context.weather, tool_workflow),
+    )
+
+
 def revise_travel_plan(
     previous_result: TravelPlanResult,
     feedback: str,
@@ -362,6 +820,7 @@ def revise_travel_plan(
         workflow_steps.append("Revision kept the existing itinerary because no targeted replacement was available.")
     cleanup_notes = _replace_revision_avoid_conflicts(itinerary, activities, avoid, revision)
     workflow_steps.extend(cleanup_notes)
+    _refresh_revision_cost_notes(itinerary)
 
     budget = float(original_inputs.get("budget") or itinerary.total_cost or 0)
     constraints = {
@@ -431,6 +890,376 @@ def revise_travel_plan(
     )
 
 
+def _build_interactive_questions(
+    request: TravelRequest,
+    activities: list[Activity],
+    weather: dict,
+    workflow: dict,
+) -> list[dict]:
+    questions: list[dict] = []
+    wish_text = " ".join([*request.must_have, *request.query_hints, *request.interest_tags])
+    intents = infer_intents(wish_text)
+
+    if "food" in intents and _count_by_intent(activities, "food") >= 2:
+        questions.append(
+            {
+                "id": "food_style",
+                "title": "Essen gewichten",
+                "question": "Welche Art von Essens-Erlebnissen soll staerker in den Plan?",
+                "options": [
+                    {"label": "Ausgewogen", "value": "balanced", "note": "Mische Restaurants, lokale Kueche und besondere Food-Spots."},
+                    {"label": "Lokale Kueche", "value": "local_food", "note": "Priorisiere typische lokale Restaurants und traditionelle Gerichte."},
+                    {"label": "Street Food & Maerkte", "value": "street_food", "note": "Priorisiere Maerkte, Food-Touren und lockere Essens-Spots."},
+                    {"label": "Fine Dining", "value": "fine_dining", "note": "Nutze mehr Budget fuer besondere Restaurants."},
+                ],
+            }
+        )
+
+    if "nature" in intents and _count_by_intent(activities, "nature") >= 2:
+        questions.append(
+            {
+                "id": "nature_style",
+                "title": "Natur-Stil",
+                "question": "Welche Naturerlebnisse passen besser?",
+                "options": [
+                    {"label": "Ausgewogen", "value": "balanced", "note": "Mische zentrale Gruenflaechen und Aussichtspunkte."},
+                    {"label": "Stadtparks", "value": "city_parks", "note": "Bevorzuge kurze, leicht erreichbare Naturstopps."},
+                    {"label": "Aussichtspunkte", "value": "viewpoints", "note": "Bevorzuge Orte mit Panorama und Fotomotiven."},
+                    {"label": "Kurzer Ausflug", "value": "short_trip", "note": "Plane eher ein groesseres Naturerlebnis mit etwas Transferzeit."},
+                ],
+            }
+        )
+
+    if request.budget and request.budget > 0:
+        budget = workflow.get("budget_assessment") if isinstance(workflow.get("budget_assessment"), dict) else {}
+        target_min = budget.get("target_min")
+        target_max = budget.get("target_max")
+        questions.append(
+            {
+                "id": "budget_use",
+                "title": "Budget nutzen",
+                "question": "Wie soll das Budget bei der Planung eingesetzt werden?",
+                "options": [
+                    {"label": "Ausgewogen", "value": "balanced", "note": f"Plane im Zielbereich {target_min}-{target_max} EUR, falls moeglich."},
+                    {"label": "Preisbewusst", "value": "save", "note": "Nutze mehr kostenlose oder guenstige Optionen."},
+                    {"label": "Besondere Erlebnisse", "value": "spend", "note": "Nutze mehr Budget fuer Touren, Tickets oder bessere Restaurants."},
+                ],
+            }
+        )
+
+    if bool(weather.get("rain_expected")) or int(weather.get("max_rain_chance") or 0) >= 60:
+        questions.insert(
+            0,
+            {
+                "id": "weather_strategy",
+                "title": "Wetterstrategie",
+                "question": "Es gibt Regenrisiko. Wie soll der Plan damit umgehen?",
+                "options": [
+                    {"label": "Indoor priorisieren", "value": "indoor", "note": "Bevorzuge Museen, Restaurants und wetterfeste Orte."},
+                    {"label": "Outdoor mit Backup", "value": "backup", "note": "Outdoor bleibt drin, aber mit indoorfreundlicher Alternative."},
+                    {"label": "Unveraendert", "value": "unchanged", "note": "Plane nach Wunsch, Wetter nur als Hinweis."},
+                ],
+            },
+        )
+
+    missing = []
+    coverage = workflow.get("wish_coverage") if isinstance(workflow.get("wish_coverage"), dict) else {}
+    if isinstance(coverage.get("missing"), list):
+        missing = [str(item) for item in coverage.get("missing") if str(item).strip()]
+    if missing:
+        questions.insert(
+            0,
+            {
+                "id": "coverage_strategy",
+                "title": "Offene Wuensche",
+                "question": "Einige Wuensche haben noch wenige oder keine Kandidaten. Wie soll TravelAI reagieren?",
+                "options": [
+                    {"label": "Gezielt weitersuchen", "value": "search_more", "note": "Der finale Plan priorisiert Ersatzqueries und passende Alternativen."},
+                    {"label": "Aehnliche Orte", "value": "nearby", "note": "Nutze thematisch aehnliche Kandidaten aus der vorhandenen Suche."},
+                    {"label": "Trotzdem planen", "value": "continue", "note": "Erstelle den Plan mit den vorhandenen Kandidaten."},
+                ],
+                "context": missing[:4],
+            },
+        )
+
+    return questions[:3]
+
+
+def _select_interactive_expansion_queries(feedback: str, must_have: list[str], destination: str) -> list[PlaceQuery]:
+    max_queries = _configured_int("TRAVELAI_MAX_INTERACTIVE_EXPANSION_QUERIES", 3, minimum=1, maximum=5)
+    hints = _merge_unique(_generic_intent_query_hints(feedback), [feedback], _matched_must_have_for_query(feedback, must_have))
+    selected: list[PlaceQuery] = []
+    seen: set[str] = set()
+    for hint in hints:
+        cleaned = _clean_revision_query_hint(hint)
+        if not cleaned:
+            continue
+        if destination and destination.lower() not in cleaned.lower():
+            cleaned = f"{destination} {cleaned}"
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(
+            PlaceQuery(
+                query=cleaned,
+                reason="Interactive user feedback query.",
+                source="interactive_feedback",
+                must_have=_interactive_query_must_have(cleaned, feedback, must_have, destination),
+            )
+        )
+        if len(selected) >= max_queries:
+            break
+    return selected
+
+
+def _interactive_query_must_have(query: str, feedback: str, must_have: list[str], destination: str = "") -> list[str]:
+    matched = _matched_must_have_for_query(f"{query} {feedback}", must_have, destination)
+    if matched:
+        return matched
+    feedback_intents = infer_intents(feedback)
+    intent_matches = []
+    for wish in must_have:
+        if _is_gaming_feedback(feedback) and _is_anime_feedback(wish) and not _is_gaming_feedback(wish):
+            continue
+        if _is_anime_feedback(feedback) and _is_gaming_feedback(wish) and not _is_anime_feedback(wish):
+            continue
+        if infer_intents(wish) & feedback_intents:
+            intent_matches.append(wish)
+    if intent_matches:
+        return intent_matches
+    requirement = _interactive_feedback_requirement(feedback)
+    return [requirement] if requirement else []
+
+
+def _generic_intent_query_hints(feedback: str) -> list[str]:
+    intents = infer_intents(feedback)
+    tokens = set(_match_tokens(feedback))
+    hints: list[str] = []
+    gaming = _is_gaming_feedback(feedback)
+    anime = _is_anime_feedback(feedback)
+    if gaming:
+        hints.extend(["gaming shops", "video game stores", "retro game shops", "arcades"])
+    if anime:
+        hints.extend(["anime shops", "manga stores", "anime merchandise stores", "figure stores"])
+    if "food" in intents:
+        hints.extend(["local food experiences", "restaurants", "food markets"])
+    if "nature" in intents:
+        hints.extend(["nature experiences", "scenic viewpoints", "city parks"])
+    if "culture" in intents:
+        if tokens & {"museum", "museen"}:
+            hints.extend(["museums", "must-see museums"])
+        if tokens & {"architecture", "architectural", "architektur", "building", "buildings"}:
+            hints.extend(["architecture walking tour", "architectural landmarks"])
+        if not hints:
+            hints.extend(["cultural attractions", "historic landmarks"])
+    if "shopping" in intents:
+        hints.extend(["shopping streets", "local markets", "specialty stores"])
+    if "entertainment" in intents and not (gaming or anime):
+        hints.extend(["entertainment experiences", "themed attractions"])
+    if "nightlife" in intents:
+        hints.extend(["cocktail bars", "nightlife spots"])
+    return hints
+
+
+def _interactive_feedback_requirement(feedback: str) -> str:
+    intents = infer_intents(feedback)
+    tokens = set(_match_tokens(feedback))
+    if _is_gaming_feedback(feedback):
+        return "gaming places"
+    if _is_anime_feedback(feedback):
+        return "anime and manga shops"
+    if "food" in intents:
+        return "food experiences"
+    if "nature" in intents:
+        return "nature experiences"
+    if tokens & {"architecture", "architectural", "architektur", "building", "buildings"}:
+        return "architecture experiences"
+    if tokens & {"museum", "museums", "museen"}:
+        return "museums"
+    if "shopping" in intents:
+        return "shopping places"
+    if "nightlife" in intents:
+        return "nightlife spots"
+    if "entertainment" in intents:
+        return "entertainment experiences"
+    return ""
+
+
+def _is_gaming_feedback(feedback: str) -> bool:
+    tokens = set(_match_tokens(feedback))
+    text = str(feedback or "").lower()
+    gaming_terms = {
+        "gaming",
+        "game",
+        "games",
+        "gamer",
+        "arcade",
+        "arcades",
+        "retro",
+        "videogame",
+        "videogames",
+        "videospiel",
+        "videospiele",
+        "spiel",
+        "spiele",
+        "spielhalle",
+        "zocken",
+    }
+    return bool(tokens & gaming_terms) or "video game" in text or "video games" in text
+
+
+def _is_anime_feedback(feedback: str) -> bool:
+    tokens = set(_match_tokens(feedback))
+    anime_terms = {
+        "anime",
+        "manga",
+        "mangas",
+        "otaku",
+        "figure",
+        "figures",
+        "figur",
+        "figuren",
+        "merch",
+        "merchandise",
+    }
+    return bool(tokens & anime_terms)
+
+
+def _count_by_intent(activities: list[Activity], intent: str) -> int:
+    return sum(1 for activity in activities if intent in activity_intents(activity))
+
+
+def _apply_interactive_decisions(
+    activities: list[Activity],
+    profile: UserProfile,
+    decisions: dict,
+) -> list[Activity]:
+    excluded = _decision_names(decisions, "exclude_names")
+    already_visited = _decision_names(decisions, "already_visited_names")
+    included = _decision_names(decisions, "include_names")
+    more_like = _decision_names(decisions, "more_like_names")
+    blocked = excluded | already_visited
+
+    if blocked:
+        profile.avoid = _merge_unique(profile.avoid, sorted(blocked))
+
+    notes = _interactive_preference_notes(decisions, activities)
+    if notes:
+        profile.preference_notes = _merge_unique(profile.preference_notes, notes)
+
+    kept = [activity for activity in activities if activity.name.strip().lower() not in blocked]
+    kept.sort(
+        key=lambda activity: (
+            0 if activity.name.strip().lower() in included else 1,
+            0 if activity.name.strip().lower() in more_like else 1,
+            activity.name.strip().lower(),
+        )
+    )
+    return kept
+
+
+def _decision_names(decisions: dict, key: str) -> set[str]:
+    value = decisions.get(key) if isinstance(decisions, dict) else []
+    if not isinstance(value, list):
+        return set()
+    return {" ".join(str(item).strip().lower().split()) for item in value if str(item).strip()}
+
+
+def _interactive_preference_notes(decisions: dict, activities: list[Activity]) -> list[str]:
+    notes: list[str] = []
+    answers = decisions.get("answers") if isinstance(decisions, dict) else {}
+    if isinstance(answers, dict):
+        label_map = {
+            "food_style": {
+                "local_food": "Prefer typical local cuisine and traditional restaurants.",
+                "street_food": "Prefer street food, food markets, and casual food experiences.",
+                "fine_dining": "Use more budget for premium dining experiences.",
+                "balanced": "Use a balanced mix of food experiences.",
+            },
+            "nature_style": {
+                "city_parks": "Prefer central city parks and easy nature stops.",
+                "viewpoints": "Prefer scenic viewpoints and photo-friendly landscapes.",
+                "short_trip": "Prefer one stronger nature excursion if it fits the schedule.",
+                "balanced": "Use a balanced mix of nature experiences.",
+            },
+            "budget_use": {
+                "save": "Plan price-consciously and preserve more budget.",
+                "spend": "Use more of the budget for special experiences.",
+                "balanced": "Use the budget target range without forcing expensive choices.",
+            },
+            "weather_strategy": {
+                "indoor": "Prioritize indoor activities when weather risk is high.",
+                "backup": "Keep outdoor activities only with indoor-friendly alternatives.",
+                "unchanged": "Do not over-optimize for weather unless validation flags a conflict.",
+            },
+            "coverage_strategy": {
+                "search_more": "Prioritize concrete coverage for wishes with weak candidate support.",
+                "nearby": "Use thematically similar places if exact candidates are limited.",
+                "continue": "Proceed with the strongest available candidate pool.",
+            },
+        }
+        for question_id, answer in answers.items():
+            note = label_map.get(str(question_id), {}).get(str(answer))
+            if note:
+                notes.append(note)
+
+    more_like = _decision_names(decisions, "more_like_names")
+    if more_like:
+        by_name = {activity.name.strip().lower(): activity for activity in activities}
+        selected = [by_name[name].name for name in more_like if name in by_name]
+        if selected:
+            notes.append("Prefer more activities similar to: " + ", ".join(selected[:5]) + ".")
+
+    included = _decision_names(decisions, "include_names")
+    if included:
+        by_name = {activity.name.strip().lower(): activity for activity in activities}
+        selected = [by_name[name].name for name in included if name in by_name]
+        if selected:
+            notes.append("User explicitly wants to include: " + ", ".join(selected[:5]) + ".")
+    return notes
+
+
+def _compact_interactive_decisions(decisions: dict) -> dict:
+    if not isinstance(decisions, dict):
+        return {}
+    return {
+        "answers": decisions.get("answers") if isinstance(decisions.get("answers"), dict) else {},
+        "include_names": list(_decision_names(decisions, "include_names"))[:10],
+        "exclude_names": list(_decision_names(decisions, "exclude_names"))[:10],
+        "already_visited_names": list(_decision_names(decisions, "already_visited_names"))[:10],
+        "more_like_names": list(_decision_names(decisions, "more_like_names"))[:10],
+    }
+
+
+def _merge_interactive_decisions(*decision_sets: dict | None) -> dict:
+    merged = {
+        "answers": {},
+        "include_names": [],
+        "exclude_names": [],
+        "already_visited_names": [],
+        "more_like_names": [],
+    }
+    for decisions in decision_sets:
+        if not isinstance(decisions, dict):
+            continue
+        answers = decisions.get("answers")
+        if isinstance(answers, dict):
+            merged["answers"].update(answers)
+        for key in ("include_names", "exclude_names", "already_visited_names", "more_like_names"):
+            merged[key] = _merge_unique(merged[key], decisions.get(key) or [])
+
+    blocked = _decision_names(merged, "exclude_names") | _decision_names(merged, "already_visited_names")
+    if blocked:
+        merged["include_names"] = [
+            name for name in merged["include_names"] if " ".join(str(name).strip().lower().split()) not in blocked
+        ]
+        merged["more_like_names"] = [
+            name for name in merged["more_like_names"] if " ".join(str(name).strip().lower().split()) not in blocked
+        ]
+    return _compact_interactive_decisions(merged)
+
+
 def _deduplicate_activities(activities: list[Activity]) -> list[Activity]:
     seen: set[str] = set()
     unique: list[Activity] = []
@@ -479,13 +1308,29 @@ def _clean_revision_query_hint(query: str) -> str:
     cleaned = re.sub(r"\banstatt\b.+?\bbitte\b", " ", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\binstead of\b.+?\bplease\b", " ", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\b(gib|gebe|mir|bitte|please|stattdessen|instead)\b", " ", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\b(ich|moechte|möchte|will|haette|hätte|gerne|ein|eine|einen|das|die|der)\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"\b(ich|moechte|möchte|will|haette|hätte|gerne|ein|eine|einen|das|die|der|da|noch|mehr|bisschen|etwas|fehlt|fehlen|suche|such|brauche|brauch)\b",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
     cleaned = " ".join(cleaned.split())
     return cleaned or " ".join(str(query or "").strip().split())
 
 
-def _matched_must_have_for_query(query: str, must_have: list[str]) -> list[str]:
-    matched = [wish for wish in must_have if _text_matches_requirement(query.lower(), wish)]
+def _matched_must_have_for_query(query: str, must_have: list[str], destination: str = "") -> list[str]:
+    matched: list[str] = []
+    query_intents = infer_intents(query)
+    for wish in must_have:
+        wish_intents = infer_intents(wish)
+        if query_intents and wish_intents and not (query_intents & wish_intents):
+            continue
+        if _is_gaming_feedback(query) and _is_anime_feedback(wish) and not _is_gaming_feedback(wish):
+            continue
+        if _is_anime_feedback(query) and _is_gaming_feedback(wish) and not _is_anime_feedback(wish):
+            continue
+        if token_overlap_score(query.lower(), wish, destination) >= 0.67:
+            matched.append(wish)
     return matched
 
 
@@ -858,6 +1703,47 @@ def _remove_note_mentions(day, terms: list[str]) -> None:
     day.notes = filtered
 
 
+def _refresh_revision_cost_notes(itinerary: Itinerary) -> None:
+    stale_markers = [
+        "budgetziel",
+        "gesamtausgaben geplant",
+        "gesamtaktiv",
+        "aktuelle aktivkostenerwartung",
+        "restbudget",
+        "aktualisierte kosten nach anpassung",
+    ]
+    total = _format_cost_value(itinerary.total_cost)
+    for day in itinerary.days:
+        fresh_notes: list[str] = []
+        for note in day.notes:
+            note_text = str(note).strip()
+            if not note_text:
+                continue
+            note_lower = note_text.lower()
+            if any(marker in note_lower for marker in stale_markers):
+                continue
+            fresh_notes.append(note_text)
+        day_cost = _format_cost_value(day.total_cost)
+        duration = _format_duration_value(day.total_duration_hours)
+        fresh_notes.insert(
+            0,
+            (
+                f"Aktualisierte Kosten nach Anpassung: Tag {day.day} ca. "
+                f"{day_cost} {itinerary.currency}, Dauer ca. {duration}; "
+                f"Gesamtplan ca. {total} {itinerary.currency}."
+            ),
+        )
+        day.notes = fresh_notes
+
+
+def _format_cost_value(value: float) -> str:
+    return str(int(value)) if float(value).is_integer() else f"{value:.1f}"
+
+
+def _format_duration_value(value: float) -> str:
+    return f"{int(value)} h" if float(value).is_integer() else f"{value:.1f} h"
+
+
 def _find_itinerary_activity(
     itinerary: Itinerary,
     target_terms: list[str],
@@ -1006,6 +1892,48 @@ def _repair_must_have_coverage(
         target_day.notes.append(f"{replacement.name} wurde ergaenzt, um den Wunsch '{wish}' abzudecken.")
         notes.append(f"added {replacement.name} for missing wish '{wish}'")
     return notes
+
+
+def _repair_interactive_includes(
+    itinerary: Itinerary,
+    candidates: list[Activity],
+    decisions: dict,
+) -> list[str]:
+    notes: list[str] = []
+    if not itinerary.days:
+        return notes
+    included = _decision_names(decisions, "include_names")
+    if not included:
+        return notes
+
+    used_names = {activity.name.strip().lower() for day in itinerary.days for activity in day.activities}
+    by_name = {activity.name.strip().lower(): activity for activity in candidates}
+    for include_name in included:
+        if include_name in used_names:
+            continue
+        candidate = by_name.get(include_name)
+        if not candidate:
+            continue
+        target_day = min(itinerary.days, key=lambda day: (len(day.activities), day.total_duration_hours))
+        if len(target_day.activities) >= 4:
+            removable = _least_relevant_non_included_activity(target_day.activities, included)
+            if removable:
+                target_day.activities.remove(removable)
+                used_names.discard(removable.name.strip().lower())
+                target_day.notes.append(f"{removable.name} wurde ersetzt, damit ein explizit gewuenschter Kandidat eingeplant wird.")
+        target_day.activities.append(candidate)
+        used_names.add(candidate.name.strip().lower())
+        target_day.notes.append(f"{candidate.name} wurde eingeplant, weil du es als 'Unbedingt einplanen' markiert hast.")
+        notes.append(f"added explicitly included candidate {candidate.name}")
+    return notes
+
+
+def _least_relevant_non_included_activity(activities: list[Activity], included: set[str]) -> Activity | None:
+    removable = [activity for activity in activities if activity.name.strip().lower() not in included]
+    if not removable:
+        return None
+    removable.sort(key=lambda activity: (activity.cost, activity.duration_hours, activity.name.strip().lower()))
+    return removable[0]
 
 
 def _itinerary_covers_wish(itinerary: Itinerary, wish: str) -> bool:
