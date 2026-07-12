@@ -101,7 +101,7 @@ def _friendly_exception(exc: Exception) -> str:
     if len(text) > 500:
         return text[:500] + "..."
     return text
-MAIN_VIEWS = ["KI", "Reiseplan", "Technik"]
+MAIN_VIEWS = ["Briefing", "Kandidaten", "Reiseplan", "Memory", "Technik"]
 
 
 def main() -> None:
@@ -113,19 +113,19 @@ def main() -> None:
     sidebar_state = _render_sidebar(current_profile)
 
     _render_header()
-    pending_view = st.session_state.pop("pending_main_view", None)
-    if pending_view:
-        st.session_state.main_view = pending_view
-    selected_view = st.radio("Ansicht", MAIN_VIEWS, horizontal=True, key="main_view", label_visibility="collapsed")
-
     result = st.session_state.get("last_result")
     parsed_request = st.session_state.get("last_parsed_request")
 
-    if selected_view == "KI":
+    briefing_tab, candidates_tab, plan_tab, memory_tab, tech_tab = st.tabs(MAIN_VIEWS)
+    with briefing_tab:
         _render_ai_view(current_profile, sidebar_state, result)
-    elif selected_view == "Reiseplan":
+    with candidates_tab:
+        _render_candidates_view()
+    with plan_tab:
         _render_plan_view(result, parsed_request)
-    else:
+    with memory_tab:
+        _render_memory_view(current_profile)
+    with tech_tab:
         _render_tech_view(result, parsed_request, sidebar_state, current_profile)
 
 
@@ -345,15 +345,99 @@ def _render_ai_view(profile, sidebar_state: dict[str, Any], result: TravelPlanRe
         )
 
     prepared = st.session_state.get("prepared_context")
+    st.markdown("### Aktueller Stand")
     if st.session_state.get("planning_stage") == "CONFLICT_REVIEW" and st.session_state.get("pending_conflict_result"):
-        _render_budget_conflict_review()
+        st.markdown(
+            _info_panel(
+                "Rueckfrage offen",
+                "Der vorlaeufige Plan braucht eine Budgetentscheidung. Oeffne den Kandidaten-Tab, um festzulegen, wie TravelAI weiter planen soll.",
+            ),
+            unsafe_allow_html=True,
+        )
     elif prepared:
-        _render_interactive_planning(prepared)
+        _render_prepared_status(prepared)
     elif result:
-        st.markdown("### Letzter Stand")
         _render_ai_summary(result)
     else:
         _render_empty_state(profile, sidebar_state)
+
+
+def _render_candidates_view() -> None:
+    prepared = st.session_state.get("prepared_context")
+    if st.session_state.get("planning_stage") == "CONFLICT_REVIEW" and st.session_state.get("pending_conflict_result"):
+        _render_budget_conflict_review()
+        return
+    if not prepared:
+        st.markdown("### Kandidaten")
+        st.markdown(
+            _info_panel(
+                "Noch keine Kandidaten",
+                "Bereite zuerst im Briefing-Tab eine Reise vor. Danach erscheinen hier echte Google-Places-Kandidaten und Rueckfragen.",
+            ),
+            unsafe_allow_html=True,
+        )
+        return
+    _render_interactive_planning(prepared)
+
+
+def _render_memory_view(profile) -> None:
+    st.markdown("### Memory & Profil")
+    prepared = st.session_state.get("prepared_context")
+    result = st.session_state.get("last_result")
+    col_1, col_2, col_3, col_4 = st.columns(4)
+    col_1.metric("Profil", getattr(profile, "user_id", st.session_state.user_id))
+    col_2.metric("Tags", len(getattr(profile, "interest_tags", []) or []))
+    col_3.metric("Praeferenzen", len(getattr(profile, "preference_notes", []) or []))
+    col_4.metric("Vergangene Ziele", len(getattr(profile, "past_destinations", []) or []))
+
+    st.markdown("#### Profilzusammenfassung")
+    profile_bits = []
+    if getattr(profile, "interest_tags", None):
+        profile_bits.append("Interessen: " + ", ".join(str(item) for item in profile.interest_tags[:10]))
+    if getattr(profile, "preference_notes", None):
+        profile_bits.append("Praeferenzen: " + " | ".join(str(item) for item in profile.preference_notes[:4]))
+    if getattr(profile, "avoid", None):
+        profile_bits.append("Meiden: " + ", ".join(str(item) for item in profile.avoid[:8]))
+    if getattr(profile, "past_destinations", None):
+        profile_bits.append("Bisherige Ziele: " + ", ".join(str(item) for item in profile.past_destinations[:8]))
+    st.markdown(_bullets_panel("Was TravelAI ueber dieses Profil weiss", profile_bits or ["Noch keine belastbare Profil-Memory."]), unsafe_allow_html=True)
+
+    if prepared:
+        _render_memory_influence(prepared)
+    elif result:
+        memory = ((result.query_planning or {}).get("memory_usage") or [])
+        ignored = ((result.query_planning or {}).get("ignored_memories") or [])
+        if memory or ignored:
+            st.markdown("#### Memory-Nutzung im letzten Plan")
+            for item in memory[:6]:
+                st.markdown(_memory_item_card(item.get("memory", ""), item.get("effect", ""), "success"), unsafe_allow_html=True)
+            for item in ignored[:4]:
+                st.markdown(_memory_item_card(item.get("memory", ""), item.get("reason", ""), "muted"), unsafe_allow_html=True)
+        else:
+            st.caption("Im letzten fertigen Plan wurde keine explizite Memory-Nutzung gemeldet.")
+    else:
+        st.caption("Sobald eine Reise vorbereitet ist, erscheint hier, wie Chroma/Memory die Planung beeinflusst.")
+
+
+def _render_prepared_status(prepared: PreparedPlanContext) -> None:
+    request = prepared.request
+    col_1, col_2, col_3, col_4 = st.columns(4)
+    col_1.metric("Ziel", request.destination or "-")
+    col_2.metric("Tage", request.duration_days)
+    col_3.metric("Budget", _format_currency(request.budget))
+    col_4.metric("Kandidaten", len(prepared.activities))
+    wishes = request.must_have or ["Plan wird aus Profil und Anfrage abgeleitet"]
+    st.markdown(
+        _bullets_panel(
+            "Naechster Schritt",
+            [
+                "Recherche ist abgeschlossen.",
+                "Oeffne den Kandidaten-Tab, markiere passende Orte und erstelle danach den finalen Plan.",
+                "Erkannte Planungsbasis: " + ", ".join(str(item) for item in wishes[:5]),
+            ],
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def _run_prepare_plan(
@@ -458,7 +542,7 @@ def _run_prepare_plan(
 
 def _render_interactive_planning(prepared: PreparedPlanContext) -> None:
     request = prepared.request
-    st.markdown("### Interaktive Planung")
+    st.markdown("### Kandidaten auswählen")
     col_1, col_2, col_3, col_4 = st.columns(4)
     col_1.metric("Ziel", request.destination or "-")
     col_2.metric("Tage", request.duration_days)
@@ -468,7 +552,7 @@ def _render_interactive_planning(prepared: PreparedPlanContext) -> None:
     st.markdown(
         _info_panel(
             "Recherche abgeschlossen",
-            "TravelAI hat die Anfrage verstanden, Memory und Tools genutzt und echte Google-Places-Kandidaten gesammelt. Jetzt kannst du den Plan wie im Reisebuero beeinflussen.",
+            "TravelAI hat Anfrage, Memory, Wetter und echte Google-Places-Daten vorbereitet. Markiere jetzt, was in den Plan soll.",
         ),
         unsafe_allow_html=True,
     )
@@ -478,7 +562,8 @@ def _render_interactive_planning(prepared: PreparedPlanContext) -> None:
         st.markdown(_render_tags(request.must_have, "accent"), unsafe_allow_html=True)
     if prepared.weather:
         st.caption(str(prepared.weather.get("summary") or "Wetterdaten geladen."))
-    _render_memory_influence(prepared)
+    if getattr(request, "use_profile_memory", False) or (prepared.query_planning or {}).get("memory_usage"):
+        st.caption("Memory wurde beruecksichtigt. Details findest du im Memory-Tab.")
 
     st.markdown("#### Rueckfragen")
     answers: dict[str, str] = {}
@@ -504,7 +589,7 @@ def _render_interactive_planning(prepared: PreparedPlanContext) -> None:
     else:
         st.caption("Keine zwingende Rueckfrage erkannt. Du kannst trotzdem Kandidaten markieren.")
 
-    st.markdown("#### Kandidaten-Vorschau")
+    st.markdown("#### Orte und Erlebnisse")
     candidate_actions: dict[str, str] = {}
     for activity in prepared.activities[:12]:
         candidate_actions[activity.name] = _render_candidate_card(activity)
@@ -558,20 +643,29 @@ def _render_interactive_planning(prepared: PreparedPlanContext) -> None:
 
 def _render_candidate_card(activity) -> str:
     with st.container(border=True):
-        top = st.columns([1.4, 0.7])
-        with top[0]:
-            st.markdown(f"**{html.escape(activity.name)}**")
-            st.caption(_category_label(activity.category))
-        with top[1]:
-            meta = []
-            if activity.cost:
-                meta.append(_format_currency(activity.cost))
-            if activity.duration_hours:
-                meta.append(f"{activity.duration_hours:g} h")
-            if meta:
-                st.caption(" | ".join(meta))
+        meta = []
+        if activity.cost:
+            meta.append(_format_currency(activity.cost))
+        if activity.duration_hours:
+            meta.append(f"{activity.duration_hours:g} h")
+        st.markdown(
+            f"""
+            <div class="candidate-card-head">
+              <div>
+                <div class="candidate-title">{html.escape(activity.name)}</div>
+                <div class="candidate-meta">{_pill(_category_label(activity.category), "accent")}</div>
+              </div>
+              <div class="candidate-price">{html.escape(" · ".join(meta) if meta else "flexibel")}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        details = _place_details(activity.description or "")
+        if details:
+            st.markdown(_render_tags(details[:3], "muted"), unsafe_allow_html=True)
         if activity.description:
-            st.caption(_compact_description(activity.description, 190))
+            with st.expander("Details", expanded=False):
+                st.caption(_compact_description(activity.description, 420))
         return st.radio(
             "Entscheidung",
             ["Neutral", "Unbedingt einplanen", "Kenne ich schon", "Mehr davon", "Nicht mein Stil"],
@@ -588,14 +682,14 @@ def _render_memory_influence(prepared: PreparedPlanContext) -> None:
     ignored_memories = query_planning.get("ignored_memories") or []
     memory_context = prepared.memory_context or []
 
-    with st.expander("Memory-Einfluss", expanded=bool(getattr(request, "use_profile_memory", False) or memory_usage)):
+    with st.expander("Warum dieser Plan zu dir passt", expanded=bool(getattr(request, "use_profile_memory", False) or memory_usage)):
         col_1, col_2 = st.columns(2)
         with col_1:
             st.markdown("**Aus deiner Anfrage**")
             if request.must_have:
                 st.markdown(_render_tags(request.must_have, "accent"), unsafe_allow_html=True)
             else:
-                st.caption("Keine expliziten Muss-Wuensche erkannt.")
+                st.caption("Keine expliziten Muss-Wuensche erkannt; die Planung wird aus Anfrage und Profil abgeleitet.")
         with col_2:
             st.markdown("**Aus deinem Profil / Chroma**")
             if memory_context:
@@ -612,7 +706,7 @@ def _render_memory_influence(prepared: PreparedPlanContext) -> None:
                 effect = str(item.get("effect") or "").strip()
                 confidence = item.get("confidence")
                 suffix = f" (Confidence: {confidence})" if confidence not in (None, "") else ""
-                st.markdown(f"- {html.escape(memory)} -> {html.escape(effect)}{html.escape(suffix)}")
+                st.markdown(_memory_item_card(memory, f"{effect}{suffix}", "success"), unsafe_allow_html=True)
         elif getattr(request, "use_profile_memory", False):
             st.caption("Profil-Memory wurde angefragt; der Query Planner hat keine explizite Zusatzentscheidung gemeldet.")
 
@@ -621,7 +715,7 @@ def _render_memory_influence(prepared: PreparedPlanContext) -> None:
             for item in ignored_memories[:5]:
                 memory = str(item.get("memory") or "").strip()
                 reason = str(item.get("reason") or "").strip()
-                st.markdown(f"- {html.escape(memory)} -> {html.escape(reason)}")
+                st.markdown(_memory_item_card(memory, reason, "muted"), unsafe_allow_html=True)
 
 
 def _collect_interactive_decisions(candidate_actions: dict[str, str], answers: dict[str, str]) -> dict:
@@ -856,13 +950,20 @@ def _render_ai_summary(result: TravelPlanResult) -> None:
 
 
 def _render_plan_view(result: TravelPlanResult | None, parsed_request: TravelRequest | None) -> None:
-    st.markdown("### Reiseplan")
+    st.markdown("### Finaler Reiseplan")
     if not result or not parsed_request:
         st.markdown(_info_panel("Noch kein Reiseplan vorhanden.", "Erstelle zuerst im KI-Tab einen Plan."), unsafe_allow_html=True)
         return
 
     summary = (result.explanation or {}).get("summary") or f"Plan fuer {result.itinerary.destination}."
     st.markdown(_info_panel(f"Reise nach {result.itinerary.destination}", summary), unsafe_allow_html=True)
+    total_activities = sum(len(day.activities) for day in result.itinerary.days)
+    total_hours = sum(float(day.total_duration_hours or 0) for day in result.itinerary.days)
+    col_1, col_2, col_3, col_4 = st.columns(4)
+    col_1.metric("Tage", len(result.itinerary.days))
+    col_2.metric("Aktivitaeten", total_activities)
+    col_3.metric("Dauer", f"{total_hours:g} h")
+    col_4.metric("Budget", _format_currency(result.itinerary.total_cost, result.itinerary.currency))
     _render_wish_coverage(result.validation)
     _render_itinerary(result)
     _render_revision_panel(result, parsed_request)
@@ -883,21 +984,30 @@ def _render_wish_coverage(validation) -> None:
 
 def _render_itinerary(result: TravelPlanResult) -> None:
     for day in result.itinerary.days:
-        with st.expander(f"Tag {day.day}", expanded=day.day == 1):
+        with st.expander(
+            f"Tag {day.day} · {_format_currency(day.total_cost, result.itinerary.currency)} · {day.total_duration_hours:g} h",
+            expanded=True,
+        ):
+            timeline_items = []
             for index, activity in enumerate(day.activities, start=1):
                 meta = []
                 if activity.duration_hours:
                     meta.append(f"{activity.duration_hours:g} h")
                 if activity.cost:
                     meta.append(_format_currency(activity.cost, result.itinerary.currency))
-                st.markdown(f"{index}. **{html.escape(activity.name)}**")
-                st.caption(f"{_category_label(activity.category)}" + (f" | {' | '.join(meta)}" if meta else ""))
-                if activity.description:
-                    st.caption(_compact_description(activity.description))
+                timeline_items.append(
+                    {
+                        "index": index,
+                        "name": activity.name,
+                        "category": _category_label(activity.category),
+                        "meta": " · ".join(meta),
+                        "details": _compact_description(activity.description, 180) if activity.description else "",
+                    }
+                )
+            st.markdown(_timeline_html(timeline_items), unsafe_allow_html=True)
             if day.notes:
-                st.markdown("**Hinweise**")
-                st.markdown(_bullet_list(day.notes))
-            st.write(f"Tagessumme: {_format_currency(day.total_cost, result.itinerary.currency)}")
+                with st.expander("Hinweise", expanded=False):
+                    st.markdown(_bullet_list(day.notes))
 
 
 def _render_revision_panel(result: TravelPlanResult, parsed_request: TravelRequest) -> None:
@@ -1163,6 +1273,106 @@ def _apply_styles() -> None:
             color: #f7fbfc;
             border: 1px solid rgba(93,160,255,0.2);
           }
+          .stTabs [data-baseweb="tab-list"] {
+            gap: 0.35rem;
+            background: rgba(8,18,31,0.58);
+            border: 1px solid rgba(95,142,196,0.18);
+            border-radius: 14px;
+            padding: 0.35rem;
+            margin-bottom: 1rem;
+          }
+          .stTabs [data-baseweb="tab"] {
+            border-radius: 10px;
+            padding: 0.45rem 0.9rem;
+            color: #bfd0e2;
+            font-weight: 700;
+          }
+          .stTabs [aria-selected="true"] {
+            background: rgba(93,160,255,0.18);
+            color: #f4fbff;
+          }
+          div[data-testid="stVerticalBlockBorderWrapper"] {
+            border-color: rgba(95,142,196,0.28) !important;
+            border-radius: 14px !important;
+            background: linear-gradient(180deg, rgba(16,33,54,0.72), rgba(8,18,31,0.72));
+          }
+          .candidate-card-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            align-items: flex-start;
+            margin-bottom: 0.55rem;
+          }
+          .candidate-title {
+            color: #f3f8ff;
+            font-size: 1.02rem;
+            font-weight: 800;
+            margin-bottom: 0.35rem;
+          }
+          .candidate-meta { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+          .candidate-price {
+            color: #d6e3f5;
+            font-size: 0.85rem;
+            font-weight: 700;
+            white-space: nowrap;
+          }
+          .memory-card {
+            padding: 0.75rem 0.85rem;
+            border: 1px solid rgba(95,142,196,0.28);
+            border-radius: 12px;
+            background: rgba(10,24,40,0.82);
+            margin-bottom: 0.55rem;
+          }
+          .memory-card.success { border-left: 4px solid var(--good); }
+          .memory-card.muted { border-left: 4px solid #7088a4; }
+          .memory-source {
+            color: #dce9fb;
+            font-weight: 700;
+            margin-bottom: 0.2rem;
+          }
+          .memory-effect { color: #aebfd5; }
+          .timeline {
+            position: relative;
+            padding-left: 1.15rem;
+            margin: 0.2rem 0 0.6rem 0;
+          }
+          .timeline:before {
+            content: "";
+            position: absolute;
+            left: 0.35rem;
+            top: 0.35rem;
+            bottom: 0.35rem;
+            width: 2px;
+            background: linear-gradient(180deg, var(--accent), rgba(93,160,255,0.08));
+          }
+          .timeline-item {
+            position: relative;
+            margin: 0 0 0.85rem 0;
+            padding: 0.75rem 0.9rem;
+            border: 1px solid rgba(95,142,196,0.24);
+            border-radius: 12px;
+            background: rgba(8,18,31,0.72);
+          }
+          .timeline-item:before {
+            content: "";
+            position: absolute;
+            left: -1.03rem;
+            top: 1rem;
+            width: 0.7rem;
+            height: 0.7rem;
+            border-radius: 999px;
+            background: var(--accent);
+            box-shadow: 0 0 0 4px rgba(93,160,255,0.13);
+          }
+          .timeline-top {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            align-items: baseline;
+          }
+          .timeline-name { font-weight: 800; color: #f3f8ff; }
+          .timeline-meta { color: #aebfd5; font-size: 0.82rem; white-space: nowrap; }
+          .timeline-desc { color: #9fb2ca; margin-top: 0.35rem; font-size: 0.84rem; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -1288,6 +1498,51 @@ def _category_label(category: str) -> str:
 def _compact_description(description: str, limit: int = 260) -> str:
     text = " ".join(str(description).split())
     return text if len(text) <= limit else text[: limit - 1] + "..."
+
+
+def _place_details(description: str) -> list[str]:
+    details: list[str] = []
+    text = str(description or "")
+    for marker, label in [
+        ("Rating:", "Rating"),
+        ("Reviews:", "Reviews"),
+        ("Address:", "Adresse"),
+        ("Matched query:", "Query"),
+        ("Matched must-have:", "Wunsch"),
+    ]:
+        if marker not in text:
+            continue
+        value = text.split(marker, 1)[1].split("|", 1)[0].strip()
+        if value:
+            details.append(f"{label}: {_compact_description(value, 48)}")
+    return details
+
+
+def _memory_item_card(memory: Any, effect: Any, kind: str = "success") -> str:
+    return (
+        f"<div class='memory-card {html.escape(kind)}'>"
+        f"<div class='memory-source'>{html.escape(_compact_description(str(memory), 180))}</div>"
+        f"<div class='memory-effect'>{html.escape(_compact_description(str(effect), 220))}</div>"
+        "</div>"
+    )
+
+
+def _timeline_html(items: list[dict[str, Any]]) -> str:
+    html_items = []
+    for item in items:
+        category = _pill(item.get("category", ""), "accent")
+        meta = html.escape(str(item.get("meta") or ""))
+        desc = html.escape(str(item.get("details") or ""))
+        html_items.append(
+            "<div class='timeline-item'>"
+            "<div class='timeline-top'>"
+            f"<div><span class='timeline-name'>{item.get('index')}. {html.escape(str(item.get('name') or ''))}</span> {category}</div>"
+            f"<div class='timeline-meta'>{meta}</div>"
+            "</div>"
+            + (f"<div class='timeline-desc'>{desc}</div>" if desc else "")
+            + "</div>"
+        )
+    return "<div class='timeline'>" + "".join(html_items) + "</div>"
 
 
 def _format_currency(value: float, currency: str = "EUR") -> str:
