@@ -18,6 +18,14 @@ if str(ROOT) not in sys.path:
 load_dotenv(ROOT / ".env", override=True)
 
 from app.agents.request_agent import parse_travel_request
+from app.export.discord_client import DiscordDeliveryError
+from app.export.export_service import (
+    ExportValidationError,
+    calculate_plan_hash,
+    create_trip_export,
+    deliver_trip_to_discord,
+)
+from app.export.pdf_generator import PdfGenerationError
 from app.models.preference_source import PreferenceSource
 from app.models.travel_request import TravelRequest
 from app.orchestrator import (
@@ -49,6 +57,7 @@ DEFAULT_REQUEST = (
     "Ich will 2 Tage nach Paris, typische franzoesische Kueche und Anime-Laeden, "
     "aber kein Sport und keine Touristenfallen."
 )
+PDF_EXPORT_CACHE_VERSION = "travel-copy-v3"
 
 STYLE_CHOICES = [
     ("Ausgewogen", "balanced"),
@@ -98,6 +107,8 @@ def _friendly_exception(exc: Exception) -> str:
         )
     if "timeout" in lower or "timed out" in lower:
         return "Der KI-Aufruf hat zu lange gedauert. Bitte erneut versuchen; die bisherigen Profildaten bleiben erhalten."
+    if isinstance(exc, ExportValidationError):
+        return text
     if len(text) > 500:
         return text[:500] + "..."
     return text
@@ -850,6 +861,7 @@ def _complete_final_plan(result: TravelPlanResult, label: str = "Interaktiver Er
     st.session_state.prepared_context = None
     st.session_state.pending_conflict_result = None
     st.session_state.pending_conflict_decisions = {}
+    _clear_export_cache()
     st.session_state.planning_stage = "COMPLETED"
     st.session_state.pending_main_view = "Reiseplan"
 
@@ -966,6 +978,7 @@ def _render_plan_view(result: TravelPlanResult | None, parsed_request: TravelReq
     col_4.metric("Budget", _format_currency(result.itinerary.total_cost, result.itinerary.currency))
     _render_wish_coverage(result.validation)
     _render_itinerary(result)
+    _render_export_panel(result)
     _render_revision_panel(result, parsed_request)
 
 
@@ -1008,6 +1021,246 @@ def _render_itinerary(result: TravelPlanResult) -> None:
             if day.notes:
                 with st.expander("Hinweise", expanded=False):
                     st.markdown(_bullet_list(day.notes))
+
+
+def _render_export_panel(result: TravelPlanResult) -> None:
+    st.divider()
+    st.markdown("### Export")
+    if not result.validation.ok:
+        st.info("Export wird angeboten, sobald der finale Plan die Validation besteht.")
+        return
+
+    try:
+        export = _get_cached_trip_export(result)
+    except (PdfGenerationError, Exception) as exc:
+        st.error(f"PDF konnte nicht vorbereitet werden: {_friendly_exception(exc)}")
+        return
+
+    col_1, col_2 = st.columns(2)
+    with col_1:
+        st.download_button(
+            "PDF herunterladen",
+            data=export.pdf_bytes,
+            file_name=export.filename,
+            mime="application/pdf",
+            use_container_width=True,
+        )
+    with col_2:
+        if st.button("An Discord senden", type="primary", use_container_width=True):
+            try:
+                with st.spinner("Reiseplan wird an Discord gesendet..."):
+                    deliver_trip_to_discord(result, export=export)
+                st.success("Der Reiseplan wurde an Discord gesendet.")
+            except DiscordDeliveryError as exc:
+                st.error(_friendly_exception(exc))
+            except Exception as exc:
+                st.error(f"Discord-Versand fehlgeschlagen: {_friendly_exception(exc)}")
+
+
+def _get_cached_trip_export(result: TravelPlanResult):
+    plan_hash = f"{PDF_EXPORT_CACHE_VERSION}:{calculate_plan_hash(result)}"
+    cached_hash = st.session_state.get("trip_export_hash")
+    cached_export = st.session_state.get("trip_export")
+    if cached_hash == plan_hash and cached_export is not None:
+        return cached_export
+    export = create_trip_export(result)
+    st.session_state.trip_export = export
+    st.session_state.trip_export_hash = plan_hash
+    return export
+
+
+def _clear_export_cache() -> None:
+    st.session_state.trip_export = None
+    st.session_state.trip_export_hash = ""
+
+
+def _get_cached_sample_trip_export():
+    plan = _sample_pdf_plan()
+    plan_hash = f"{PDF_EXPORT_CACHE_VERSION}:sample:{calculate_plan_hash(plan)}"
+    cached_hash = st.session_state.get("sample_trip_export_hash")
+    cached_export = st.session_state.get("sample_trip_export")
+    if cached_hash == plan_hash and cached_export is not None:
+        return cached_export
+    export = create_trip_export(plan)
+    st.session_state.sample_trip_export = export
+    st.session_state.sample_trip_export_hash = plan_hash
+    return export
+
+
+def _sample_pdf_plan() -> dict[str, Any]:
+    return {
+        "itinerary": {
+            "destination": "Madrid",
+            "currency": "EUR",
+            "total_cost": 285,
+            "days": [
+                {
+                    "day": 1,
+                    "total_cost": 135,
+                    "total_duration_hours": 6.5,
+                    "notes": ["Für Casa Alberto und das Fußballmuseum ist eine Reservierung sinnvoll."],
+                    "activities": [
+                        _sample_activity(
+                            "Casa Alberto",
+                            "food",
+                            "typical Spanish cuisine",
+                            "C. de las Huertas, 18, Centro, 28012 Madrid, Spain",
+                            "4.4/5",
+                            "5248",
+                            "https://www.casaalberto.es/",
+                            "https://maps.google.com/?cid=5012004565998211204",
+                            35,
+                            1.5,
+                        ),
+                        _sample_activity(
+                            "Legends: The Home of Football",
+                            "culture",
+                            "watch a football match in Madrid",
+                            "Cra de S. Jeronimo, 2, Centro, 28014 Madrid, Spain",
+                            "4.8/5",
+                            "6117",
+                            "https://www.legendsmuseo.com/",
+                            "https://maps.google.com/?cid=12684119845016445530",
+                            25,
+                            2,
+                        ),
+                        _sample_activity(
+                            "Mercado de San Miguel",
+                            "food",
+                            "enjoy local Spanish food in Madrid",
+                            "Pl. de San Miguel, s/n, Centro, 28005 Madrid, Spain",
+                            "4.4/5",
+                            "142000",
+                            "https://mercadodesanmiguel.es/",
+                            "https://maps.google.com/?cid=123456789",
+                            40,
+                            1.5,
+                        ),
+                        _sample_activity(
+                            "Templo de Debod",
+                            "culture",
+                            "architecture experiences",
+                            "C. de Ferraz, 1, Moncloa-Aravaca, 28008 Madrid, Spain",
+                            "4.4/5",
+                            "57000",
+                            "",
+                            "https://maps.google.com/?cid=987654321",
+                            0,
+                            1.5,
+                        ),
+                    ],
+                },
+                {
+                    "day": 2,
+                    "total_cost": 150,
+                    "total_duration_hours": 6,
+                    "notes": ["Stadiontour vormittags planen, danach bleibt genug Zeit für Tapas und Spaziergang."],
+                    "activities": [
+                        _sample_activity(
+                            "Bernabeu",
+                            "sport",
+                            "watch a football match in Madrid",
+                            "Av. de Concha Espina, 1, Chamartin, 28036 Madrid, Spain",
+                            "4.7/5",
+                            "233",
+                            "https://bernabeu.realmadrid.com/",
+                            "https://maps.google.com/?cid=12177723301084993928",
+                            35,
+                            2,
+                        ),
+                        _sample_activity(
+                            "El Retiro Park",
+                            "nature",
+                            "nature experiences",
+                            "Plaza de la Independencia, 7, Retiro, 28001 Madrid, Spain",
+                            "4.8/5",
+                            "180000",
+                            "",
+                            "https://maps.google.com/?cid=1020304050",
+                            0,
+                            1.5,
+                        ),
+                        _sample_activity(
+                            "La Mi Venta",
+                            "food",
+                            "typical Spanish cuisine",
+                            "Pl. de la Marina Espanola, 7, Centro, 28013 Madrid, Spain",
+                            "4.7/5",
+                            "7688",
+                            "https://www.lamiventa.com/",
+                            "https://maps.google.com/?cid=9750852188347724557",
+                            40,
+                            1.5,
+                        ),
+                        _sample_activity(
+                            "Rooftop Circulo de Bellas Artes",
+                            "activity",
+                            "architecture experiences",
+                            "C. de Alcala, 42, Centro, 28014 Madrid, Spain",
+                            "4.4/5",
+                            "12000",
+                            "https://www.circulobellasartes.com/",
+                            "https://maps.google.com/?cid=2030405060",
+                            75,
+                            1,
+                        ),
+                    ],
+                },
+            ],
+        },
+        "validation": {"ok": True, "error_count": 0, "warning_count": 0, "issues": []},
+        "request": {
+            "destination": "Madrid",
+            "duration_days": 2,
+            "budget": 350,
+            "must_have": ["typical Spanish cuisine", "watch a football match in Madrid", "architecture experiences"],
+            "avoid": ["clubs"],
+            "travel_style": "balanced",
+        },
+        "weather_summary": {"summary": "Madrid: sonnig, warm und mit geringer Regenwahrscheinlichkeit."},
+        "explanation": {
+            "summary": (
+                "Der Beispielplan kombiniert klassische Madrider Küche, Fußballkultur, "
+                "Architektur und entspannte Stadterlebnisse in zwei gut gefüllten Tagen."
+            )
+        },
+        "agentic_quality_review": {
+            "summary": "Das geplante Budget wird sinnvoll genutzt und die Qualitätsprüfung wurde bestanden."
+        },
+    }
+
+
+def _sample_activity(
+    name: str,
+    category: str,
+    must_have: str,
+    address: str,
+    rating: str,
+    reviews: str,
+    website: str,
+    maps_url: str,
+    cost: float,
+    duration_hours: float,
+) -> dict[str, Any]:
+    parts = [
+        f"Category: {category}",
+        "Matched query: PDF test export",
+        f"Matched must-have: {must_have}",
+        f"Address: {address}",
+        f"Rating: {rating}",
+        f"Reviews: {reviews}",
+    ]
+    if website:
+        parts.append(f"Website: {website}")
+    parts.append(f"Google Maps: {maps_url}")
+    return {
+        "name": name,
+        "category": category,
+        "description": " | ".join(parts),
+        "cost": cost,
+        "duration_hours": duration_hours,
+        "source": "pdf_test_fixture",
+    }
 
 
 def _render_revision_panel(result: TravelPlanResult, parsed_request: TravelRequest) -> None:
@@ -1061,6 +1314,7 @@ def _render_revision_panel(result: TravelPlanResult, parsed_request: TravelReque
             st.session_state.plan_versions.append(
                 {"version": len(st.session_state.plan_versions) + 1, "label": "Anpassung", "feedback": feedback}
             )
+            _clear_export_cache()
             st.success("Plan wurde angepasst.")
             st.rerun()
         except Exception as exc:
@@ -1110,6 +1364,21 @@ def _render_tech_view(
         mime="application/json",
         use_container_width=True,
     )
+
+    st.divider()
+    st.markdown("#### PDF-Testexport")
+    st.caption("Erzeugt eine feste Beispielreise direkt aus dem Export-System, ohne KI-, Places- oder Wetteraufrufe.")
+    try:
+        test_export = _get_cached_sample_trip_export()
+        st.download_button(
+            "Test-PDF herunterladen",
+            data=test_export.pdf_bytes,
+            file_name=test_export.filename,
+            mime="application/pdf",
+            use_container_width=True,
+        )
+    except Exception as exc:
+        st.error(f"Test-PDF konnte nicht erzeugt werden: {_friendly_exception(exc)}")
 
     with st.expander("Umgebung", expanded=True):
         st.json(payload["environment"])
@@ -1178,6 +1447,10 @@ def _init_state() -> None:
     st.session_state.setdefault("gmail_sources", [])
     st.session_state.setdefault("gmail_messages", [])
     st.session_state.setdefault("gmail_account_email", "")
+    st.session_state.setdefault("trip_export", None)
+    st.session_state.setdefault("trip_export_hash", "")
+    st.session_state.setdefault("sample_trip_export", None)
+    st.session_state.setdefault("sample_trip_export_hash", "")
 
 
 def _apply_styles() -> None:

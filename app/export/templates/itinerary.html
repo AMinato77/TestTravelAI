@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>{{ destination }} - Reiseplan</title>
+  <style>{{ pdf_css | safe }}</style>
+</head>
+<body>
+  <section class="pdf-page cover-page">
+    <div class="cover-backdrop">
+      <div class="cover-mark">{{ destination_initial }}</div>
+    </div>
+    <div class="cover-overlay"></div>
+    <div class="cover-content">
+      <div class="brand">TRAVELAI</div>
+      <h1>{{ destination }}</h1>
+      <p class="subtitle">Dein persönlicher Reiseplan</p>
+      <div class="cover-meta">
+        {% if duration_days %}<span>{{ duration_days }} Tag{% if duration_days != 1 %}e{% endif %}</span>{% endif %}
+        {% if maximum_budget_label %}<span>Budgetrahmen: {{ maximum_budget_label }}</span>{% endif %}
+        {% if travel_style %}<span>{{ travel_style }}</span>{% endif %}
+        {% if created_date %}<span>{{ created_date }}</span>{% endif %}
+      </div>
+    </div>
+    <div class="cover-promises">
+      <div>Lokale Empfehlungen</div>
+      <div>Persönlich zusammengestellt</div>
+      <div>Entspannt durch {{ destination }}</div>
+    </div>
+  </section>
+
+  <section class="pdf-page overview-page">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Reiseüberblick</p>
+        <h2>Deine Reise auf einen Blick</h2>
+      </div>
+      <div class="page-number">02</div>
+    </header>
+
+    {% if summary %}
+    <p class="lead">{{ summary }}</p>
+    {% endif %}
+
+    <div class="stats-grid">
+      {% for stat in plan_stats %}
+      <div class="stat-card">
+        <span>{{ stat.label }}</span>
+        <strong>{{ stat.value }}</strong>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="overview-columns">
+      <div class="panel">
+        <h3>Darauf darfst du dich freuen</h3>
+        {% if highlights %}
+        <ul class="chip-list">
+          {% for item in highlights %}<li>{{ item }}</li>{% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted">Der Plan ist breit und abwechslungsreich gehalten.</p>
+        {% endif %}
+      </div>
+      <div class="panel">
+        <h3>Bewusst nicht eingeplant</h3>
+        {% if not_planned %}
+        <ul class="chip-list muted-list">
+          {% for item in not_planned %}<li>{{ item }}</li>{% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted">Es gab keine Inhalte, die ausdrücklich ausgeschlossen wurden.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="wide-panel">
+      <h3>Wetter und Planung</h3>
+      <div class="quality-row">
+        <div>
+          <span class="label">Wetter</span>
+          <strong>{{ weather_summary or "Für die Reise liegen keine Wetterdaten vor." }}</strong>
+        </div>
+        <div>
+          <span class="label">Gut zu wissen</span>
+          <strong>{{ planning_note }}</strong>
+        </div>
+      </div>
+    </div>
+
+    <div class="route-preview">
+      {% for day in days %}
+      <div class="route-day">
+        <span>Tag {{ day.number }}</span>
+        <strong>{{ day.title }}</strong>
+        <p>{{ day.activities|length }} Stopps · {{ day.total_duration_label }}{% if day.total_cost_label %} · {{ day.total_cost_label }}{% endif %}</p>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  {% for day in days %}
+  <section class="pdf-page itinerary-page">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Tag {{ day.number }}</p>
+        <h2>{{ day.title }}</h2>
+      </div>
+      <div class="page-number">{{ "%02d"|format(loop.index + 2) }}</div>
+    </header>
+
+    <div class="day-summary">
+      <span>{{ day.activities|length }} Stopps</span>
+      {% if day.total_duration_label %}<span>{{ day.total_duration_label }}</span>{% endif %}
+      {% if day.total_cost_label %}<span>{{ day.total_cost_label }}</span>{% endif %}
+    </div>
+
+    <div class="timeline">
+      {% for activity in day.activities %}
+      <article class="activity-card category-{{ activity.category_key }}">
+        <div class="time-column">
+          <span class="time">{{ activity.time_label }}</span>
+          <span class="dot"></span>
+        </div>
+        <div class="activity-visual">{{ activity.visual_label }}</div>
+        <div class="activity-content">
+          <div class="activity-topline">
+            <span>{{ activity.category }}</span>
+            {% if activity.cost_label %}<span>{{ activity.cost_label }}</span>{% endif %}
+          </div>
+          <h3>{{ activity.name }}</h3>
+          <p class="metadata">
+            {% if activity.rating %}Rating {{ activity.rating }}{% endif %}
+            {% if activity.reviews %}{% if activity.rating %} · {% endif %}{{ activity.reviews }}{% endif %}
+            {% if activity.duration_label %}{% if activity.rating or activity.reviews %} · {% endif %}{{ activity.duration_label }}{% endif %}
+          </p>
+          {% if activity.reason %}<p class="reason">{{ activity.reason }}</p>{% endif %}
+          {% if activity.address %}<p class="address">{{ activity.address }}</p>{% endif %}
+          <div class="links">
+            {% if activity.maps_url %}<a href="{{ activity.maps_url }}">Google Maps öffnen</a>{% endif %}
+            {% if activity.website %}<a href="{{ activity.website }}">Website öffnen</a>{% endif %}
+          </div>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+
+    {% if day.notes %}
+    <div class="note-box">
+      <strong>Tipp für den Tag</strong>
+      <ul>{% for note in day.notes[:2] %}<li>{{ note }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+  </section>
+  {% endfor %}
+
+  <section class="pdf-page closing-page">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Für unterwegs</p>
+        <h2>Alles Wichtige für unterwegs</h2>
+      </div>
+      <div class="page-number">{{ "%02d"|format(days|length + 3) }}</div>
+    </header>
+
+    <div class="budget-band">
+      <div>
+        <span class="label">Geplante Ausgaben</span>
+        <strong>{{ estimated_total_cost_label or "Keine Kostenangabe" }}</strong>
+      </div>
+      <div>
+        <span class="label">Budgetrahmen</span>
+        <strong>{{ maximum_budget_label or "Nicht angegeben" }}</strong>
+      </div>
+    </div>
+
+    <div class="wide-panel">
+      <h3>Gut zu wissen</h3>
+      <p>{{ budget_story }}</p>
+    </div>
+
+    {% if category_totals %}
+    <div class="wide-panel">
+      <h3>Ausgaben nach Erlebnisart</h3>
+      {% for item in category_totals %}
+      <div class="budget-row">
+        <span>{{ item.category }}</span>
+        <strong>{{ item.amount_label }}</strong>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="overview-columns">
+      <div class="panel">
+        <h3>Adressen und Kartenlinks</h3>
+        {% if maps_links %}
+        <ul class="link-list">
+          {% for link in maps_links[:10] %}<li><a href="{{ link.url }}">{{ link.name }}</a></li>{% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted">Für diesen Plan sind keine Kartenlinks hinterlegt.</p>
+        {% endif %}
+      </div>
+      <div class="panel">
+        <h3>Vor der Reise</h3>
+        {% if notes %}
+        <ul class="notes-list">{% for note in notes %}<li>{{ note }}</li>{% endfor %}</ul>
+        {% else %}
+        <p>Prüfe Reservierungen und Öffnungszeiten kurz vor der Reise noch einmal.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <footer class="footer">TravelAI · Persönlicher Reiseplan · {{ created_date }}</footer>
+  </section>
+</body>
+</html>
