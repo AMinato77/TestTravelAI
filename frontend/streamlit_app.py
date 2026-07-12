@@ -38,7 +38,7 @@ from app.tools.gmail_tool import (
     gmail_credentials_available,
     save_gmail_credentials_file,
 )
-from app.tools.openai_runtime import MissingLocalAIError, MissingOpenAIKeyError, ai_provider
+from app.tools.openai_runtime import MissingLocalAIError, MissingOpenAIKeyError, TransientAIProviderError, ai_provider
 
 
 APP_TITLE = "TravelAI"
@@ -86,6 +86,21 @@ AVOID_TAG_CHOICES = [
     "Volle Orte",
     "Stressiger Plan",
 ]
+
+
+def _friendly_exception(exc: Exception) -> str:
+    text = str(exc)
+    lower = text.lower()
+    if isinstance(exc, TransientAIProviderError) or ("cloudflare" in lower and "520" in lower):
+        return (
+            "OpenAI hatte gerade einen temporaeren Serverfehler (Cloudflare 520). "
+            "Bitte in etwa einer Minute erneut versuchen. Es wurden keine Demo-Daten verwendet."
+        )
+    if "timeout" in lower or "timed out" in lower:
+        return "Der KI-Aufruf hat zu lange gedauert. Bitte erneut versuchen; die bisherigen Profildaten bleiben erhalten."
+    if len(text) > 500:
+        return text[:500] + "..."
+    return text
 MAIN_VIEWS = ["KI", "Reiseplan", "Technik"]
 
 
@@ -204,7 +219,7 @@ def _render_sidebar(profile) -> dict[str, Any]:
                     st.success("Credentials gespeichert.")
                     st.rerun()
                 except GmailIntegrationError as exc:
-                    st.error(str(exc))
+                    st.error(_friendly_exception(exc))
 
         gmail_limit = st.number_input("Max. Mails", min_value=1, max_value=50, value=20, step=1)
         gmail_days = st.number_input("Lookback Tage", min_value=1, max_value=3650, value=365, step=30)
@@ -222,7 +237,7 @@ def _render_sidebar(profile) -> dict[str, Any]:
                 st.success(f"{len(messages)} Mail(s), {len(sources)} Quelle(n)")
                 st.rerun()
             except GmailIntegrationError as exc:
-                st.error(str(exc))
+                st.error(_friendly_exception(exc))
         if st.button("Gmail-Memory loeschen", use_container_width=True):
             deleted = delete_user_memory_sources(st.session_state.user_id, source_type="email_newsletter")
             st.session_state.gmail_sources = []
@@ -406,12 +421,13 @@ def _run_prepare_plan(
                 must_have=effective_must_have,
                 interest_tags=effective_tags,
                 query_hints=effective_query_hints,
+                use_profile_memory=parsed.use_profile_memory,
             )
     except (MissingOpenAIKeyError, MissingLocalAIError) as exc:
-        st.error(str(exc))
+        st.error(_friendly_exception(exc))
         return
     except Exception as exc:
-        st.error(f"Planung fehlgeschlagen: {exc}")
+        st.error(f"Planung fehlgeschlagen: {_friendly_exception(exc)}")
         return
 
     st.session_state.prepared_context = prepared
@@ -432,6 +448,7 @@ def _run_prepare_plan(
         "avoid": effective_avoid,
         "interest_tags": effective_tags,
         "query_hints": effective_query_hints,
+        "use_profile_memory": parsed.use_profile_memory,
     }
     st.session_state.plan_versions = []
     st.session_state.pending_conflict_result = None
@@ -461,6 +478,7 @@ def _render_interactive_planning(prepared: PreparedPlanContext) -> None:
         st.markdown(_render_tags(request.must_have, "accent"), unsafe_allow_html=True)
     if prepared.weather:
         st.caption(str(prepared.weather.get("summary") or "Wetterdaten geladen."))
+    _render_memory_influence(prepared)
 
     st.markdown("#### Rueckfragen")
     answers: dict[str, str] = {}
@@ -516,7 +534,7 @@ def _render_interactive_planning(prepared: PreparedPlanContext) -> None:
                     st.warning("Keine neuen Kandidaten gefunden. Du kannst die Suchbeschreibung konkreter formulieren.")
                 st.rerun()
             except Exception as exc:
-                st.error(f"Nachsuche fehlgeschlagen: {exc}")
+                st.error(f"Nachsuche fehlgeschlagen: {_friendly_exception(exc)}")
 
     col_a, col_b = st.columns([1, 1])
     with col_a:
@@ -528,7 +546,7 @@ def _render_interactive_planning(prepared: PreparedPlanContext) -> None:
                 _store_or_review_final_result(result, decisions)
                 st.rerun()
             except Exception as exc:
-                st.error(f"Finalisierung fehlgeschlagen: {exc}")
+                st.error(f"Finalisierung fehlgeschlagen: {_friendly_exception(exc)}")
     with col_b:
         if st.button("Neue Recherche starten", use_container_width=True):
             st.session_state.prepared_context = None
@@ -561,6 +579,49 @@ def _render_candidate_card(activity) -> str:
             key=f"candidate_action_{_safe_widget_key(activity.name)}",
             label_visibility="collapsed",
         )
+
+
+def _render_memory_influence(prepared: PreparedPlanContext) -> None:
+    request = prepared.request
+    query_planning = prepared.query_planning or {}
+    memory_usage = query_planning.get("memory_usage") or []
+    ignored_memories = query_planning.get("ignored_memories") or []
+    memory_context = prepared.memory_context or []
+
+    with st.expander("Memory-Einfluss", expanded=bool(getattr(request, "use_profile_memory", False) or memory_usage)):
+        col_1, col_2 = st.columns(2)
+        with col_1:
+            st.markdown("**Aus deiner Anfrage**")
+            if request.must_have:
+                st.markdown(_render_tags(request.must_have, "accent"), unsafe_allow_html=True)
+            else:
+                st.caption("Keine expliziten Muss-Wuensche erkannt.")
+        with col_2:
+            st.markdown("**Aus deinem Profil / Chroma**")
+            if memory_context:
+                for source in memory_context[:4]:
+                    preview = " ".join(str(source.text).split())[:180]
+                    st.caption(f"{source.name}: {preview}")
+            else:
+                st.caption("Keine passende Memory gefunden.")
+
+        if memory_usage:
+            st.markdown("**Genutzte Erinnerungen**")
+            for item in memory_usage[:5]:
+                memory = str(item.get("memory") or "").strip()
+                effect = str(item.get("effect") or "").strip()
+                confidence = item.get("confidence")
+                suffix = f" (Confidence: {confidence})" if confidence not in (None, "") else ""
+                st.markdown(f"- {html.escape(memory)} -> {html.escape(effect)}{html.escape(suffix)}")
+        elif getattr(request, "use_profile_memory", False):
+            st.caption("Profil-Memory wurde angefragt; der Query Planner hat keine explizite Zusatzentscheidung gemeldet.")
+
+        if ignored_memories:
+            st.markdown("**Bewusst nicht genutzt**")
+            for item in ignored_memories[:5]:
+                memory = str(item.get("memory") or "").strip()
+                reason = str(item.get("reason") or "").strip()
+                st.markdown(f"- {html.escape(memory)} -> {html.escape(reason)}")
 
 
 def _collect_interactive_decisions(candidate_actions: dict[str, str], answers: dict[str, str]) -> dict:
@@ -657,7 +718,7 @@ def _render_budget_conflict_review() -> None:
                 _store_or_review_final_result(reduced, reduced_decisions)
                 st.rerun()
             except Exception as exc:
-                st.error(f"Budget-Reduktion fehlgeschlagen: {exc}")
+                st.error(f"Budget-Reduktion fehlgeschlagen: {_friendly_exception(exc)}")
         if disabled:
             st.caption("Automatisch nicht moeglich: Die fest markierten Aktivitaeten liegen bereits ueber dem Budget.")
 
@@ -670,7 +731,7 @@ def _render_budget_conflict_review() -> None:
                 _store_or_review_final_result(replanned, revised)
                 st.rerun()
             except Exception as exc:
-                st.error(f"Neuplanung fehlgeschlagen: {exc}")
+                st.error(f"Neuplanung fehlgeschlagen: {_friendly_exception(exc)}")
 
     if st.button("Zurueck zur Kandidaten-Auswahl", use_container_width=True):
         st.session_state.planning_stage = "PREVIEW"
@@ -883,6 +944,7 @@ def _render_revision_panel(result: TravelPlanResult, parsed_request: TravelReque
                         "interest_tags": parsed_request.interest_tags,
                         "query_hints": parsed_request.query_hints,
                         "travel_style": parsed_request.travel_style,
+                        "use_profile_memory": parsed_request.use_profile_memory,
                     },
                 )
             st.session_state.last_result = revised
@@ -892,7 +954,7 @@ def _render_revision_panel(result: TravelPlanResult, parsed_request: TravelReque
             st.success("Plan wurde angepasst.")
             st.rerun()
         except Exception as exc:
-            st.error(f"Anpassung fehlgeschlagen: {exc}")
+            st.error(f"Anpassung fehlgeschlagen: {_friendly_exception(exc)}")
 
 
 def _render_tech_view(

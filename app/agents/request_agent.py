@@ -35,7 +35,7 @@ def parse_travel_request(text: str, fallback: TravelRequest) -> TravelRequest:
                     "Extract a travel planning request as strict JSON. "
                     "Use keys: destination, destination_scope, needs_destination_recommendation, "
                     "destination_reasoning, duration_days, budget, must_have, avoid, interest_tags, "
-                    "query_hints, travel_style. "
+                    "query_hints, travel_style, use_profile_memory. "
                     "must_have contains concrete free-form wishes exactly as the user means them, "
                     "for example merchandise shops, local food markets, quiet neighborhoods, "
                     "architecture walks, specific events, or niche experiences. "
@@ -53,6 +53,8 @@ def parse_travel_request(text: str, fallback: TravelRequest) -> TravelRequest:
                     "explicitly names a destination. "
                     "destination_scope must be city, country, region, or open. "
                     "travel_style must be balanced, relaxed, adventure, luxury, or budget. "
+                    "use_profile_memory is true when the user asks to use their profile, previous trips, old "
+                    "experiences, what fits them personally, or similar personal history; otherwise false. "
                     "If the user asks which city to choose inside a country, keep the country as "
                     "destination, set destination_scope='country', and needs_destination_recommendation=true."
                 ),
@@ -84,6 +86,7 @@ def _request_from_data(data: dict, raw_text: str, fallback: TravelRequest) -> Tr
     must_have = _merge_unique(parsed_must_have or _fallback_must_have(raw_text))
     avoid = _clean_avoid_terms(_merge_unique(parsed_avoid or _fallback_avoid(raw_text), fallback.avoid))
     query_hints = _merge_unique(_as_list(data.get("query_hints")), must_have)
+    use_profile_memory = bool(data.get("use_profile_memory")) or _asks_to_use_profile_memory(raw_text)
     return TravelRequest(
         destination=destination,
         destination_scope=scope,
@@ -96,6 +99,7 @@ def _request_from_data(data: dict, raw_text: str, fallback: TravelRequest) -> Tr
         interest_tags=_clean_tags(data.get("interest_tags")),
         query_hints=query_hints,
         travel_style=_clean_style(data.get("travel_style"), raw_text, fallback.travel_style),
+        use_profile_memory=use_profile_memory,
     )
 
 
@@ -115,6 +119,7 @@ def _fallback_parse(text: str, fallback: TravelRequest) -> TravelRequest:
         interest_tags=[],
         query_hints=must_have[:],
         travel_style=_clean_style(None, text, fallback.travel_style),
+        use_profile_memory=_asks_to_use_profile_memory(text),
     )
 
 
@@ -193,6 +198,33 @@ def _asks_for_destination_recommendation(text: str) -> bool:
     )
 
 
+def _asks_to_use_profile_memory(text: str) -> bool:
+    lower = text.lower()
+    return any(
+        phrase in lower
+        for phrase in [
+            "alte erfahrung",
+            "alten erfahrung",
+            "alte reise",
+            "alten reise",
+            "bisherige erfahrung",
+            "bisherigen erfahrung",
+            "bisherige reise",
+            "bisherigen reise",
+            "mein profil",
+            "meine praef",
+            "meine präf",
+            "was zu mir passt",
+            "zu mir passt",
+            "based on my profile",
+            "previous trips",
+            "past trips",
+            "past experience",
+            "travel history",
+        ]
+    )
+
+
 def _infer_destination_scope(destination: str, text: str, fallback: TravelRequest) -> str:
     if not destination:
         return fallback.destination_scope or "open"
@@ -227,6 +259,7 @@ def _request_payload(request: TravelRequest) -> dict:
         "interest_tags": getattr(request, "interest_tags", []),
         "query_hints": getattr(request, "query_hints", []),
         "travel_style": getattr(request, "travel_style", "balanced"),
+        "use_profile_memory": getattr(request, "use_profile_memory", False),
     }
 
 

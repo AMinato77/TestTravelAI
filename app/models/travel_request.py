@@ -16,3 +16,4 @@ class TravelRequest:
     interest_tags: list[str] = field(default_factory=list)
     query_hints: list[str] = field(default_factory=list)
     travel_style: str = "balanced"
+    use_profile_memory: bool = False

@@ -14,6 +14,7 @@ from app.agents.planning_agent import plan_itinerary
 from app.agents.preference_agent import extract_preferences
 from app.agents.query_planning_agent import PlaceQuery, plan_place_queries
 from app.agents.revision_agent import interpret_revision_feedback
+from app.agents.trip_memory_agent import summarize_planned_trip_memory
 from app.models.activity import Activity
 from app.models.itinerary import Itinerary, ValidationResult
 from app.models.preference_source import PreferenceSource
@@ -71,6 +72,119 @@ class PreparedPlanContext:
     questions: list[dict]
 
 
+def _retrieve_planning_memory(user_id: str, request: TravelRequest, workflow_steps: list[str]) -> list[PreferenceSource]:
+    memory_context: list[PreferenceSource] = []
+    try:
+        memory_query = build_memory_query(
+            destination=request.destination,
+            query_terms=request.query_hints or request.must_have or request.interest_tags,
+            avoid=request.avoid,
+            travel_style=request.travel_style,
+        )
+        retrieved_memory = retrieve_user_memory(user_id, memory_query)
+        memory_context = [memory.source for memory in retrieved_memory]
+        workflow_steps.append(f"ChromaDB semantic retrieval returned {len(memory_context)} memory chunk(s).")
+
+        if getattr(request, "use_profile_memory", False):
+            broad_query = (
+                "Previous travel experiences, liked activities, disliked activities, already visited places, "
+                "interactive planning decisions, user profile preferences, travel behavior, and recurring trip patterns."
+            )
+            broad_memory = [memory.source for memory in retrieve_user_memory(user_id, broad_query, limit=8)]
+            before = len(memory_context)
+            memory_context = _deduplicate_memory_sources([*memory_context, *broad_memory])
+            workflow_steps.append(
+                "Profile-memory mode enabled; broad ChromaDB experience retrieval added "
+                f"{len(memory_context) - before} memory chunk(s)."
+            )
+    except Exception as exc:
+        workflow_steps.append(f"Memory RAG skipped because ChromaDB/embeddings failed: {exc}")
+    return memory_context
+
+
+def _deduplicate_memory_sources(sources: list[PreferenceSource]) -> list[PreferenceSource]:
+    deduped: list[PreferenceSource] = []
+    seen: set[tuple[str, str, str]] = set()
+    for source in sources:
+        key = (
+            str(source.source_type).strip().lower(),
+            str(source.name).strip().lower(),
+            " ".join(str(source.text).split()).lower(),
+        )
+        if not key[2] or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(source)
+    return deduped
+
+
+def _store_planned_trip_memory(
+    user_id: str,
+    request: TravelRequest,
+    itinerary: Itinerary,
+    decisions: dict,
+    workflow_steps: list[str],
+) -> None:
+    try:
+        memory = summarize_planned_trip_memory(
+            request=request,
+            itinerary=itinerary,
+            decisions=decisions,
+            workflow_steps=workflow_steps,
+        )
+        text_parts = [
+            str(memory.get("summary") or "").strip(),
+            _memory_list_line("Positive patterns", memory.get("positive_patterns") or []),
+            _memory_list_line("Negative patterns", memory.get("negative_patterns") or []),
+            _memory_list_line("Already known places", memory.get("already_known_places") or []),
+            _memory_list_line("Selected highlights", memory.get("selected_highlights") or []),
+            f"Signal strength: {memory.get('confidence') or 'planned_trip_signal'}",
+        ]
+        text = "\n".join(part for part in text_parts if part.strip())
+        if not text.strip():
+            return
+        chunk_count = ingest_preference_sources(
+            user_id,
+            [
+                PreferenceSource(
+                    source_type="planned_trip_summary",
+                    name=f"planned_trip_{itinerary.destination}_{len(itinerary.days)}d",
+                    text=text,
+                )
+            ],
+        )
+        workflow_steps.append(f"Saved planned trip memory summary to ChromaDB ({chunk_count} chunk(s)).")
+    except Exception as exc:
+        workflow_steps.append(f"Planned trip memory was not saved because ChromaDB/embeddings failed: {exc}")
+
+
+def _memory_list_line(label: str, values) -> str:
+    if not isinstance(values, list):
+        return ""
+    cleaned = [str(value).strip() for value in values if str(value).strip()]
+    return f"{label}: {', '.join(cleaned[:10])}." if cleaned else ""
+
+
+def _request_from_revision_inputs(
+    original_inputs: dict,
+    destination: str,
+    budget: float,
+    must_have: list[str],
+    avoid: list[str],
+) -> TravelRequest:
+    return TravelRequest(
+        destination=str(original_inputs.get("destination") or destination),
+        duration_days=int(original_inputs.get("days") or original_inputs.get("duration_days") or 1),
+        budget=float(original_inputs.get("budget") or budget),
+        must_have=_merge_unique(must_have),
+        avoid=_merge_unique(avoid),
+        interest_tags=_merge_unique(original_inputs.get("interest_tags") or []),
+        query_hints=_merge_unique(original_inputs.get("query_hints") or []),
+        travel_style=str(original_inputs.get("travel_style") or "balanced"),
+        use_profile_memory=bool(original_inputs.get("use_profile_memory")),
+    )
+
+
 def build_travel_plan(
     user_id: str,
     destination: str,
@@ -86,6 +200,7 @@ def build_travel_plan(
     must_have: list[str] | None = None,
     interest_tags: list[str] | None = None,
     query_hints: list[str] | None = None,
+    use_profile_memory: bool = False,
     ) -> TravelPlanResult:
     load_dotenv()
     reset_openai_usage_records()
@@ -102,6 +217,7 @@ def build_travel_plan(
         interest_tags=_merge_unique(interest_tags or []),
         query_hints=_merge_unique(query_hints or [], must_have or []),
         travel_style=travel_style,
+        use_profile_memory=use_profile_memory,
     )
 
     destination_decision = resolve_destination(request)
@@ -127,19 +243,7 @@ def build_travel_plan(
         except Exception as exc:
             workflow_steps.append(f"New memory sources were not embedded because ChromaDB/embeddings failed: {exc}")
 
-    memory_context: list[PreferenceSource] = []
-    try:
-        memory_query = build_memory_query(
-            destination=request.destination,
-            query_terms=request.query_hints or request.must_have or request.interest_tags,
-            avoid=request.avoid,
-            travel_style=request.travel_style,
-        )
-        retrieved_memory = retrieve_user_memory(user_id, memory_query)
-        memory_context = [memory.source for memory in retrieved_memory]
-        workflow_steps.append(f"ChromaDB semantic retrieval returned {len(memory_context)} memory chunk(s).")
-    except Exception as exc:
-        workflow_steps.append(f"Memory RAG skipped because ChromaDB/embeddings failed: {exc}")
+    memory_context = _retrieve_planning_memory(user_id, request, workflow_steps)
 
     preference_context = [*memory_context, *new_sources] or all_sources
     extracted_profile = extract_preferences(
@@ -338,6 +442,7 @@ def prepare_interactive_plan(
     must_have: list[str] | None = None,
     interest_tags: list[str] | None = None,
     query_hints: list[str] | None = None,
+    use_profile_memory: bool = False,
 ) -> PreparedPlanContext:
     """Run the real research/tool phase and pause before final itinerary planning."""
 
@@ -356,6 +461,7 @@ def prepare_interactive_plan(
         interest_tags=_merge_unique(interest_tags or []),
         query_hints=_merge_unique(query_hints or [], must_have or []),
         travel_style=travel_style,
+        use_profile_memory=use_profile_memory,
     )
 
     destination_decision = resolve_destination(request)
@@ -381,19 +487,7 @@ def prepare_interactive_plan(
         except Exception as exc:
             workflow_steps.append(f"New memory sources were not embedded because ChromaDB/embeddings failed: {exc}")
 
-    memory_context: list[PreferenceSource] = []
-    try:
-        memory_query = build_memory_query(
-            destination=request.destination,
-            query_terms=request.query_hints or request.must_have or request.interest_tags,
-            avoid=request.avoid,
-            travel_style=request.travel_style,
-        )
-        retrieved_memory = retrieve_user_memory(user_id, memory_query)
-        memory_context = [memory.source for memory in retrieved_memory]
-        workflow_steps.append(f"ChromaDB semantic retrieval returned {len(memory_context)} memory chunk(s).")
-    except Exception as exc:
-        workflow_steps.append(f"Memory RAG skipped because ChromaDB/embeddings failed: {exc}")
+    memory_context = _retrieve_planning_memory(user_id, request, workflow_steps)
 
     preference_context = [*memory_context, *new_sources] or all_sources
     extracted_profile = extract_preferences(
@@ -590,6 +684,13 @@ def finalize_interactive_plan(
         budget=request.budget,
     )
     workflow_steps.append("Explanation Agent generated the final explanation.")
+    _store_planned_trip_memory(
+        user_id=profile.user_id,
+        request=request,
+        itinerary=itinerary,
+        decisions=decisions,
+        workflow_steps=workflow_steps,
+    )
 
     places_metadata = prepared_context.agentic_tool_workflow.get("places_metadata") or {"query_count": len(prepared_context.place_queries), "cache_hits": 0}
     tool_traces = [
@@ -842,6 +943,13 @@ def revise_travel_plan(
         budget=budget,
     )
     explanation["optimization_result"] = f"Plan angepasst: {revision.get('revision_instruction') or feedback}"
+    _store_planned_trip_memory(
+        user_id=profile.user_id,
+        request=_request_from_revision_inputs(original_inputs, itinerary.destination, budget, must_have, avoid),
+        itinerary=itinerary,
+        decisions={"revision_feedback": feedback, "revision": revision},
+        workflow_steps=workflow_steps,
+    )
 
     tool_traces = [
         trace_to_dict(
