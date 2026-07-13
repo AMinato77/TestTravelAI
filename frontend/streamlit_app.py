@@ -5,6 +5,7 @@ import json
 import os
 import sys
 from dataclasses import asdict, is_dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,20 @@ if str(ROOT) not in sys.path:
 
 load_dotenv(ROOT / ".env", override=True)
 
+from app.calendar.calendar_auth import (
+    CalendarIntegrationError,
+    calendar_credentials_available,
+    calendar_user_connected,
+    connect_calendar_user,
+    reset_calendar_user,
+)
+from app.calendar.calendar_service import (
+    create_trip_calendar,
+    list_user_calendars,
+    prepare_calendar_preview,
+    sync_preview_to_calendar,
+)
+from app.calendar.calendar_state import sync_key
 from app.agents.request_agent import parse_travel_request
 from app.export.discord_client import DiscordDeliveryError
 from app.export.export_service import (
@@ -267,6 +282,8 @@ def _render_sidebar(profile) -> dict[str, Any]:
         st.session_state.prepared_context = None
         st.session_state.pending_conflict_result = None
         st.session_state.pending_conflict_decisions = {}
+        st.session_state.pending_density_result = None
+        st.session_state.pending_density_decisions = {}
         st.session_state.planning_stage = "INPUT"
         st.rerun()
 
@@ -289,7 +306,9 @@ def _render_ai_view(profile, sidebar_state: dict[str, Any], result: TravelPlanRe
             height=130,
         )
 
-        col_a, col_b, col_c = st.columns([1.5, 0.8, 0.9])
+        stored_start_date = _date_from_state(st.session_state.last_inputs.get("start_date"))
+
+        col_a, col_b, col_c, col_d = st.columns([1.4, 0.75, 0.85, 0.95])
         with col_a:
             destination = st.text_input("Reiseziel", value=st.session_state.last_inputs.get("destination", ""))
         with col_b:
@@ -302,13 +321,19 @@ def _render_ai_view(profile, sidebar_state: dict[str, Any], result: TravelPlanRe
                 value=float(st.session_state.last_inputs.get("budget", 600.0)),
                 step=50.0,
             )
-
-        col_d, col_e, col_f = st.columns(3)
         with col_d:
-            style_label = st.selectbox("Reisestil", [label for label, _ in STYLE_CHOICES])
+            travel_start_date = st.date_input(
+                "Reisestart",
+                value=stored_start_date or date.today(),
+                help="Dieses Datum wird später automatisch für Google Calendar verwendet.",
+            )
+
+        col_e, col_f, col_g = st.columns(3)
         with col_e:
-            budget_label = st.selectbox("Budgetpraeferenz", [label for label, _ in BUDGET_CHOICES], index=1)
+            style_label = st.selectbox("Reisestil", [label for label, _ in STYLE_CHOICES])
         with col_f:
+            budget_label = st.selectbox("Budgetpraeferenz", [label for label, _ in BUDGET_CHOICES], index=1)
+        with col_g:
             scope_label = st.selectbox("Zielart", [label for label, _ in DESTINATION_SCOPE_CHOICES])
 
         col_must, col_avoid = st.columns(2)
@@ -345,6 +370,7 @@ def _render_ai_view(profile, sidebar_state: dict[str, Any], result: TravelPlanRe
             destination=destination,
             days=int(days),
             budget=float(budget),
+            start_date=travel_start_date,
             travel_style=_value_for_label(style_label, STYLE_CHOICES),
             budget_preference=_value_for_label(budget_label, BUDGET_CHOICES),
             destination_scope=_value_for_label(scope_label, DESTINATION_SCOPE_CHOICES),
@@ -377,6 +403,9 @@ def _render_candidates_view() -> None:
     prepared = st.session_state.get("prepared_context")
     if st.session_state.get("planning_stage") == "CONFLICT_REVIEW" and st.session_state.get("pending_conflict_result"):
         _render_budget_conflict_review()
+        return
+    if st.session_state.get("planning_stage") == "DENSITY_REVIEW" and st.session_state.get("pending_density_result"):
+        _render_activity_density_review()
         return
     if not prepared:
         st.markdown("### Kandidaten")
@@ -458,6 +487,7 @@ def _run_prepare_plan(
     destination: str,
     days: int,
     budget: float,
+    start_date: date,
     travel_style: str,
     budget_preference: str,
     destination_scope: str,
@@ -534,6 +564,7 @@ def _run_prepare_plan(
         "destination": parsed.destination,
         "days": parsed.duration_days,
         "budget": parsed.budget,
+        "start_date": start_date.isoformat(),
         "travel_style": parsed.travel_style,
         "budget_preference": budget_preference,
         "destination_scope": parsed.destination_scope,
@@ -548,6 +579,12 @@ def _run_prepare_plan(
     st.session_state.plan_versions = []
     st.session_state.pending_conflict_result = None
     st.session_state.pending_conflict_decisions = {}
+    st.session_state.pending_density_result = None
+    st.session_state.pending_density_decisions = {}
+    st.session_state.calendar_start_date = start_date
+    st.session_state.calendar_preview = None
+    st.session_state.calendar_preview_hash = ""
+    st.session_state.calendar_sync_result = None
     st.rerun()
 
 
@@ -649,6 +686,8 @@ def _render_interactive_planning(prepared: PreparedPlanContext) -> None:
             st.session_state.planning_stage = "INPUT"
             st.session_state.pending_conflict_result = None
             st.session_state.pending_conflict_decisions = {}
+            st.session_state.pending_density_result = None
+            st.session_state.pending_density_decisions = {}
             st.rerun()
 
 
@@ -749,6 +788,101 @@ def _collect_interactive_decisions(candidate_actions: dict[str, str], answers: d
     return decisions
 
 
+def _render_activity_density_review() -> None:
+    result: TravelPlanResult | None = st.session_state.get("pending_density_result")
+    prepared: PreparedPlanContext | None = st.session_state.get("prepared_context")
+    decisions = st.session_state.get("pending_density_decisions") or {}
+    if not result or not prepared:
+        st.session_state.planning_stage = "PREVIEW" if prepared else "INPUT"
+        st.session_state.pending_density_result = None
+        st.session_state.pending_density_decisions = {}
+        st.rerun()
+        return
+
+    gaps = _activity_density_gaps(result)
+    missing_total = sum(item["missing"] for item in gaps)
+    min_per_day = _minimum_activities_per_day(prepared)
+    usable_count = _usable_candidate_count(prepared, decisions)
+
+    st.markdown("### Plan noch etwas auffuellen")
+    st.markdown(
+        _info_panel(
+            "Rueckfrage vor dem finalen Plan",
+            (
+                f"TravelAI plant mindestens {min_per_day} Stopps pro Tag. "
+                "Einige Tage sind aktuell noch zu duenn, weil markierte Ausschluesse und bekannte Orte respektiert werden."
+            ),
+        ),
+        unsafe_allow_html=True,
+    )
+
+    col_1, col_2, col_3, col_4 = st.columns(4)
+    col_1.metric("Reisetage", len(result.itinerary.days))
+    col_2.metric("Ziel pro Tag", min_per_day)
+    col_3.metric("Fehlende Stopps", missing_total)
+    col_4.metric("Nutzbare Kandidaten", usable_count)
+
+    with st.container(border=True):
+        st.markdown("**Vorlaeufiger Tagesumfang**")
+        for day in result.itinerary.days:
+            count = len(day.activities)
+            missing = max(0, min_per_day - count)
+            status = "passt" if missing == 0 else f"{missing} fehlt"
+            st.markdown(f"- Tag {day.day}: **{count} Stopps** ({status})")
+
+    st.warning(
+        "Kandidaten, die du als 'Kenne ich schon' oder 'Nicht mein Stil' markiert hast, werden nicht als Platzfueller zurueckgeholt."
+    )
+
+    search_text = st.text_input(
+        "Was soll TravelAI ergaenzend suchen?",
+        value=_density_search_suggestion(prepared, result, gaps),
+        key="density_expansion_text",
+    )
+
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        if st.button("Weitere passende Kandidaten suchen", type="primary", use_container_width=True):
+            try:
+                with st.spinner("TravelAI sucht weitere echte Google-Places-Kandidaten..."):
+                    expanded = expand_interactive_plan(prepared, search_text, decisions, limit=max(6, missing_total + 3))
+                st.session_state.prepared_context = expanded
+                st.session_state.pending_density_result = None
+                st.session_state.pending_density_decisions = {}
+                st.session_state.planning_stage = "PREVIEW"
+                st.success("Neue Kandidaten wurden geladen. Markiere sie jetzt wie gewohnt.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Nachsuche fehlgeschlagen: {_friendly_exception(exc)}")
+
+    with col_b:
+        disabled = _neutral_candidate_count(prepared, decisions) <= 0
+        if st.button("Mit neutralen Kandidaten auffuellen", disabled=disabled, use_container_width=True):
+            revised = _decisions_with_neutral_fillers(prepared, decisions, missing_total)
+            try:
+                with st.spinner("TravelAI plant mit zusaetzlichen neutralen Kandidaten neu..."):
+                    replanned = finalize_interactive_plan(prepared, revised)
+                st.session_state.pending_density_result = None
+                st.session_state.pending_density_decisions = {}
+                _store_or_review_final_result(replanned, revised)
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Neuplanung fehlgeschlagen: {_friendly_exception(exc)}")
+        if disabled:
+            st.caption("Keine neutralen Kandidaten mehr verfuegbar. Suche zuerst weitere Orte.")
+
+    with col_c:
+        if st.button("Trotzdem finalisieren", use_container_width=True):
+            _complete_final_plan(result, label="Bewusst weniger Stopps")
+            st.rerun()
+
+    if st.button("Zurueck zur Kandidaten-Auswahl", use_container_width=True):
+        st.session_state.pending_density_result = None
+        st.session_state.pending_density_decisions = {}
+        st.session_state.planning_stage = "PREVIEW"
+        st.rerun()
+
+
 def _render_budget_conflict_review() -> None:
     result: TravelPlanResult | None = st.session_state.get("pending_conflict_result")
     prepared: PreparedPlanContext | None = st.session_state.get("prepared_context")
@@ -842,6 +976,8 @@ def _render_budget_conflict_review() -> None:
         st.session_state.planning_stage = "PREVIEW"
         st.session_state.pending_conflict_result = None
         st.session_state.pending_conflict_decisions = {}
+        st.session_state.pending_density_result = None
+        st.session_state.pending_density_decisions = {}
         st.rerun()
 
 
@@ -850,6 +986,12 @@ def _store_or_review_final_result(result: TravelPlanResult, decisions: dict) -> 
         st.session_state.pending_conflict_result = result
         st.session_state.pending_conflict_decisions = decisions
         st.session_state.planning_stage = "CONFLICT_REVIEW"
+        st.session_state.pending_main_view = "KI"
+        return
+    if _has_activity_density_gap(result):
+        st.session_state.pending_density_result = result
+        st.session_state.pending_density_decisions = decisions
+        st.session_state.planning_stage = "DENSITY_REVIEW"
         st.session_state.pending_main_view = "KI"
         return
     _complete_final_plan(result, label="Interaktiver Erstplan")
@@ -861,6 +1003,8 @@ def _complete_final_plan(result: TravelPlanResult, label: str = "Interaktiver Er
     st.session_state.prepared_context = None
     st.session_state.pending_conflict_result = None
     st.session_state.pending_conflict_decisions = {}
+    st.session_state.pending_density_result = None
+    st.session_state.pending_density_decisions = {}
     _clear_export_cache()
     st.session_state.planning_stage = "COMPLETED"
     st.session_state.pending_main_view = "Reiseplan"
@@ -870,12 +1014,73 @@ def _has_budget_exceeded(result: TravelPlanResult) -> bool:
     return any(issue.issue_type == "budget_exceeded" for issue in result.validation.issues)
 
 
+def _has_activity_density_gap(result: TravelPlanResult) -> bool:
+    return bool(_activity_density_gaps(result))
+
+
 def _planned_activity_rows(result: TravelPlanResult) -> list[tuple[int, int, Any]]:
     rows: list[tuple[int, int, Any]] = []
     for day in result.itinerary.days:
         for index, activity in enumerate(day.activities):
             rows.append((day.day, index, activity))
     return rows
+
+
+def _minimum_activities_per_day(prepared: PreparedPlanContext | None = None) -> int:
+    return 3
+
+
+def _activity_density_gaps(result: TravelPlanResult, min_per_day: int = 3) -> list[dict[str, int]]:
+    gaps: list[dict[str, int]] = []
+    for day in result.itinerary.days:
+        count = len(day.activities)
+        missing = max(0, min_per_day - count)
+        if missing:
+            gaps.append({"day": day.day, "count": count, "missing": missing})
+    return gaps
+
+
+def _blocked_decision_names(decisions: dict) -> set[str]:
+    return _decision_name_set(decisions, "exclude_names") | _decision_name_set(decisions, "already_visited_names")
+
+
+def _usable_candidate_count(prepared: PreparedPlanContext, decisions: dict) -> int:
+    blocked = _blocked_decision_names(decisions)
+    return sum(1 for activity in prepared.activities if _activity_key(activity.name) not in blocked)
+
+
+def _neutral_candidate_count(prepared: PreparedPlanContext, decisions: dict) -> int:
+    return len(_neutral_candidate_names(prepared, decisions))
+
+
+def _neutral_candidate_names(prepared: PreparedPlanContext, decisions: dict) -> list[str]:
+    blocked = _blocked_decision_names(decisions)
+    included = _decision_name_set(decisions, "include_names")
+    more_like = _decision_name_set(decisions, "more_like_names")
+    names: list[str] = []
+    for activity in prepared.activities:
+        key = _activity_key(activity.name)
+        if key in blocked or key in included or key in more_like:
+            continue
+        names.append(activity.name)
+    return names
+
+
+def _decisions_with_neutral_fillers(prepared: PreparedPlanContext, decisions: dict, missing_total: int) -> dict:
+    revised = _copy_decisions(decisions)
+    needed = max(1, int(missing_total or 1))
+    neutral_names = _neutral_candidate_names(prepared, revised)
+    revised["include_names"] = _merge_unique(revised.get("include_names") or [], neutral_names[:needed])
+    return _remove_excluded_from_positive_decisions(revised)
+
+
+def _density_search_suggestion(prepared: PreparedPlanContext, result: TravelPlanResult, gaps: list[dict[str, int]]) -> str:
+    destination = prepared.request.destination or result.itinerary.destination
+    missing_total = sum(item["missing"] for item in gaps) or 3
+    wishes = ", ".join((prepared.request.must_have or prepared.request.query_hints or prepared.request.interest_tags)[:3])
+    if wishes:
+        return f"{destination}: bitte {missing_total} weitere passende Aktivitäten suchen zu {wishes}"
+    return f"{destination}: bitte {missing_total} weitere passende Aktivitäten für den Reiseplan suchen"
 
 
 def _decisions_for_auto_budget_reduction(result: TravelPlanResult, decisions: dict, budget: float) -> dict:
@@ -1056,6 +1261,8 @@ def _render_export_panel(result: TravelPlanResult) -> None:
             except Exception as exc:
                 st.error(f"Discord-Versand fehlgeschlagen: {_friendly_exception(exc)}")
 
+    _render_calendar_panel(result)
+
 
 def _get_cached_trip_export(result: TravelPlanResult):
     plan_hash = f"{PDF_EXPORT_CACHE_VERSION}:{calculate_plan_hash(result)}"
@@ -1067,6 +1274,192 @@ def _get_cached_trip_export(result: TravelPlanResult):
     st.session_state.trip_export = export
     st.session_state.trip_export_hash = plan_hash
     return export
+
+
+def _render_calendar_panel(result: TravelPlanResult) -> None:
+    st.markdown("#### Google Calendar")
+    st.caption("Überträgt den finalen Reiseplan nach einer Vorschau als einzelne Termine in deinen Google-Kalender.")
+
+    st.markdown("##### Google-Konto")
+    calendar_connected = False
+    if not calendar_credentials_available():
+        st.warning("Google OAuth-Credentials fehlen. Lade die OAuth Client JSON zuerst in der Sidebar unter Gmail/OAuth hoch.")
+    else:
+        calendar_connected = calendar_user_connected(st.session_state.user_id)
+        if calendar_connected:
+            st.success("Google Calendar ist für dieses Profil verbunden.")
+            with st.expander("Verbindung erneuern", expanded=False):
+                st.caption("Nutze das, wenn du den Calendar-Scope gerade neu in Google Cloud eingetragen hast.")
+                if st.button("Google Calendar erneut verbinden", use_container_width=True):
+                    try:
+                        reset_calendar_user(st.session_state.user_id)
+                        connect_calendar_user(st.session_state.user_id)
+                        st.success("Google Calendar wurde neu verbunden.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Google Calendar konnte nicht neu verbunden werden: {_friendly_exception(exc)}")
+        elif st.button("Google Calendar verbinden", type="primary", use_container_width=True):
+            try:
+                connect_calendar_user(st.session_state.user_id)
+                st.success("Google Calendar verbunden.")
+                st.rerun()
+            except CalendarIntegrationError as exc:
+                st.error(_friendly_exception(exc))
+            except Exception as exc:
+                st.error(f"Google Calendar konnte nicht verbunden werden: {_friendly_exception(exc)}")
+
+    calendar_plan_hash = calculate_plan_hash(result)
+    calendar_default_start = (
+        st.session_state.get("calendar_start_date")
+        or _date_from_state(st.session_state.last_inputs.get("start_date"))
+        or date.today()
+    )
+    start_date = st.date_input(
+        "Startdatum der Reise",
+        value=calendar_default_start,
+        key="calendar_start_date",
+    )
+    calendar_preview_signature = f"{calendar_plan_hash}:{start_date.isoformat()}"
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("Kalender-Vorschau erstellen", use_container_width=True):
+            try:
+                preview = prepare_calendar_preview(result, start_date=start_date, use_ai=True)
+                st.session_state.calendar_preview = preview
+                st.session_state.calendar_preview_hash = calendar_preview_signature
+                st.session_state.calendar_sync_result = None
+                st.success(f"{len(preview.events)} Termine vorbereitet.")
+            except Exception as exc:
+                st.error(f"Kalender-Vorschau konnte nicht erstellt werden: {_friendly_exception(exc)}")
+    with col_b:
+        if st.button("Kalender-Vorschau ohne KI", use_container_width=True):
+            try:
+                preview = prepare_calendar_preview(result, start_date=start_date, use_ai=False)
+                st.session_state.calendar_preview = preview
+                st.session_state.calendar_preview_hash = calendar_preview_signature
+                st.session_state.calendar_sync_result = None
+                st.success(f"{len(preview.events)} Termine vorbereitet.")
+            except Exception as exc:
+                st.error(f"Kalender-Vorschau konnte nicht erstellt werden: {_friendly_exception(exc)}")
+
+    preview = st.session_state.get("calendar_preview")
+    if not preview or st.session_state.get("calendar_preview_hash") != calendar_preview_signature:
+        return
+
+    _render_calendar_preview(preview)
+
+    st.markdown("##### Google-Konto und Zielkalender")
+    if not calendar_credentials_available() or not calendar_connected:
+        st.info("Verbinde zuerst dein Google-Konto, danach kannst du den Zielkalender auswählen und die Termine eintragen.")
+        return
+
+    try:
+        calendars = list_user_calendars(st.session_state.user_id)
+    except Exception as exc:
+        st.error(f"Kalender konnten nicht geladen werden: {_friendly_exception(exc)}")
+        return
+
+    writable_calendars = [calendar for calendar in calendars if calendar.writable]
+    if not writable_calendars:
+        st.warning("In deinem Google-Konto wurde kein beschreibbarer Kalender gefunden.")
+        return
+
+    calendar_labels = {
+        f"{calendar.summary}{' (Standard)' if calendar.primary else ''}": calendar.calendar_id
+        for calendar in writable_calendars
+    }
+    selected_calendar_label = st.selectbox(
+        "Zielkalender",
+        list(calendar_labels.keys()),
+        key="calendar_target_label",
+    )
+    calendar_id = calendar_labels[selected_calendar_label]
+
+    with st.expander("Optional: eigenen Reisekalender erstellen", expanded=False):
+        default_year = str(preview.start_date)[:4] if preview.start_date else str(date.today().year)
+        default_calendar_name = f"{preview.destination} Reise {default_year}".strip()
+        new_calendar_name = st.text_input(
+            "Name des neuen Kalenders",
+            value=default_calendar_name,
+            key="calendar_new_calendar_name",
+        )
+        if st.button("Neuen Kalender erstellen", use_container_width=True):
+            try:
+                created_calendar = create_trip_calendar(
+                    st.session_state.user_id,
+                    new_calendar_name.strip() or default_calendar_name,
+                    preview.timezone,
+                )
+                st.success(f"Kalender '{created_calendar.summary}' wurde erstellt.")
+                st.session_state.calendar_target_label = created_calendar.summary
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Kalender konnte nicht erstellt werden: {_friendly_exception(exc)}")
+
+    sync_guard_key = sync_key(f"{preview.plan_hash}:{preview.start_date}", calendar_id)
+    synced_ids = set(st.session_state.get("calendar_synced_activity_ids", {}).get(sync_guard_key, []))
+    remaining_count = len([event for event in preview.events if event.activity_id not in synced_ids])
+    if remaining_count == 0:
+        st.success("Alle vorbereiteten Termine wurden bereits in dieser Session synchronisiert.")
+        return
+
+    if st.button(f"{remaining_count} Termine in Google Calendar eintragen", type="primary", use_container_width=True):
+        try:
+            result_sync = sync_preview_to_calendar(
+                user_id=st.session_state.user_id,
+                calendar_id=calendar_id,
+                preview=preview,
+                already_synced_activity_ids=synced_ids,
+            )
+            current = dict(st.session_state.get("calendar_synced_activity_ids", {}))
+            current_ids = set(current.get(sync_guard_key, []))
+            current_ids.update(item.activity_id for item in result_sync.successes)
+            current[sync_guard_key] = sorted(current_ids)
+            st.session_state.calendar_synced_activity_ids = current
+            st.session_state.calendar_sync_result = result_sync
+            if result_sync.ok:
+                st.success(f"{len(result_sync.successes)} Termine wurden in Google Calendar erstellt.")
+            else:
+                st.warning(
+                    f"{len(result_sync.successes)} Termine erstellt, "
+                    f"{len(result_sync.failures)} fehlgeschlagen."
+                )
+        except Exception as exc:
+            st.error(f"Google-Calendar-Sync fehlgeschlagen: {_friendly_exception(exc)}")
+
+    sync_result = st.session_state.get("calendar_sync_result")
+    if sync_result:
+        _render_calendar_sync_result(sync_result)
+
+
+def _render_calendar_preview(preview) -> None:
+    st.markdown("##### Kalender-Vorschau")
+    for event in preview.events:
+        with st.container(border=True):
+            st.markdown(f"**{event.date} · {event.start_time}–{event.end_time}**")
+            st.markdown(f"**{event.title}**")
+            if event.location:
+                st.caption(event.location)
+            st.write(event.description)
+            meta = [f"Erinnerung: {event.reminder_minutes} Minuten vorher"]
+            if event.cost_label:
+                meta.append(f"Kosten: {event.cost_label}")
+            st.caption(" · ".join(meta))
+
+
+def _render_calendar_sync_result(result_sync) -> None:
+    if result_sync.successes:
+        with st.expander("Erstellte Kalendertermine", expanded=False):
+            for item in result_sync.successes:
+                if item.html_link:
+                    st.markdown(f"- [{item.event_id}]({item.html_link})")
+                else:
+                    st.write(f"- {item.event_id}")
+    if result_sync.failures:
+        with st.expander("Fehlgeschlagene Kalendertermine", expanded=True):
+            for item in result_sync.failures:
+                st.error(f"{item.title}: {item.error}")
 
 
 def _clear_export_cache() -> None:
@@ -1442,6 +1835,8 @@ def _init_state() -> None:
     st.session_state.setdefault("prepared_context", None)
     st.session_state.setdefault("pending_conflict_result", None)
     st.session_state.setdefault("pending_conflict_decisions", {})
+    st.session_state.setdefault("pending_density_result", None)
+    st.session_state.setdefault("pending_density_decisions", {})
     st.session_state.setdefault("planning_stage", "INPUT")
     st.session_state.setdefault("main_view", "KI")
     st.session_state.setdefault("gmail_sources", [])
@@ -1451,6 +1846,10 @@ def _init_state() -> None:
     st.session_state.setdefault("trip_export_hash", "")
     st.session_state.setdefault("sample_trip_export", None)
     st.session_state.setdefault("sample_trip_export_hash", "")
+    st.session_state.setdefault("calendar_preview", None)
+    st.session_state.setdefault("calendar_preview_hash", "")
+    st.session_state.setdefault("calendar_sync_result", None)
+    st.session_state.setdefault("calendar_synced_activity_ids", {})
 
 
 def _apply_styles() -> None:
@@ -1698,6 +2097,17 @@ def _to_jsonable(value: Any) -> Any:
     if hasattr(value, "to_dict"):
         return _to_jsonable(value.to_dict())
     return str(value)
+
+
+def _date_from_state(value: Any) -> date | None:
+    if isinstance(value, date):
+        return value
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        return None
 
 
 def _parse_list(text: str) -> list[str]:

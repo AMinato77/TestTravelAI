@@ -765,7 +765,8 @@ def expand_interactive_plan(
         queries=queries,
         avoid=profile.avoid,
     )
-    existing_names = {activity.name.strip().lower() for activity in base_activities}
+    blocked_names = _decision_names(decisions, "exclude_names") | _decision_names(decisions, "already_visited_names")
+    existing_names = {activity.name.strip().lower() for activity in base_activities} | blocked_names
     new_candidates = [
         activity
         for activity in _deduplicate_activities(activities)
