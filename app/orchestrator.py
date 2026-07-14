@@ -1005,6 +1005,15 @@ def _build_interactive_questions(
     weather: dict,
     workflow: dict,
 ) -> list[dict]:
+    return []
+
+
+def _build_interactive_questions_disabled(
+    request: TravelRequest,
+    activities: list[Activity],
+    weather: dict,
+    workflow: dict,
+) -> list[dict]:
     questions: list[dict] = []
     wish_text = " ".join([*request.must_have, *request.query_hints, *request.interest_tags])
     intents = infer_intents(wish_text)

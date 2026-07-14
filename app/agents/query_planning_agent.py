@@ -39,8 +39,9 @@ def plan_place_queries(
                     "Do not copy all must_have items into every query. Do not include broad tags unless they are exact request.must_have values. "
                     "A food query must not list beach/nature/culture wishes. A beach/nature query must not list food/shopping wishes. "
                     "Usually create 1-2 precise queries per concrete wish, up to max_queries. "
-                    "If request.use_profile_memory is true, actively inspect retrieved memory for durable travel "
-                    "patterns and add a small number of additional preference-based queries when they improve the trip. "
+                    "If request.use_profile_memory is true, or if retrieved memory contains durable Gmail/newsletter "
+                    "or planned-trip preference patterns, actively inspect retrieved memory and add a small number "
+                    "of additional preference-based queries when they improve the trip. "
                     "Memory may complement explicit wishes but must never override explicit must_have or avoid terms. "
                     "Memory-derived queries should use must_have=[] unless they directly search for an explicit current must_have. "
                     "Return strict JSON with keys summary, queries, memory_usage, ignored_memories. queries is a list "
@@ -160,7 +161,7 @@ def _augment_queries_from_memory(
     memory_context: list[PreferenceSource],
     max_queries: int,
 ) -> tuple[list[PlaceQuery], list[dict]]:
-    if not getattr(request, "use_profile_memory", False) or not memory_context:
+    if not _memory_should_influence_queries(request, memory_context):
         return queries, []
     destination = request.destination
     existing = {" ".join(query.query.lower().split()) for query in queries}
@@ -172,6 +173,10 @@ def _augment_queries_from_memory(
     usage: list[dict] = []
 
     templates = {
+        "nature": [
+            ("relaxed parks and scenic outdoor experiences", "Added because retrieved memory shows nature, beach, or relaxed outdoor travel interest."),
+            ("scenic viewpoints and gardens", "Added because retrieved memory shows outdoor or scenic travel preferences."),
+        ],
         "sport": [
             ("football stadium tour", "Added because retrieved memory shows football or stadium interest."),
             ("football museum or sports experience", "Added because retrieved memory shows football or sports-related planning choices."),
@@ -194,7 +199,7 @@ def _augment_queries_from_memory(
         ],
     }
 
-    for intent in ["sport", "food", "culture", "shopping", "entertainment", "nightlife"]:
+    for intent in ["nature", "sport", "food", "culture", "shopping", "entertainment", "nightlife"]:
         if intent not in memory_intents or intent in avoid_intents:
             continue
         if intent in current_intents and sum(1 for query in queries if intent in infer_intents(query.query)) >= 2:
@@ -224,6 +229,30 @@ def _augment_queries_from_memory(
         if len(queries) + len(additions) >= max_queries:
             break
     return [*queries, *additions[: max(0, max_queries - len(queries))]], usage
+
+
+def _memory_should_influence_queries(request: TravelRequest, memory_context: list[PreferenceSource]) -> bool:
+    if getattr(request, "use_profile_memory", False) and memory_context:
+        return True
+    if not memory_context:
+        return False
+    durable_source_types = {"email_newsletter", "planned_trip_summary"}
+    for source in memory_context:
+        source_type = str(source.source_type or "").strip().lower()
+        text = str(source.text or "").lower()
+        if source_type in durable_source_types and any(
+            marker in text
+            for marker in [
+                "reliable travel preference patterns",
+                "soft query directions",
+                "positive patterns",
+                "selected highlights",
+                "travel style signal",
+                "recurring interests",
+            ]
+        ):
+            return True
+    return False
 
 
 def _memory_preview_for_intent(memory_context: list[PreferenceSource], intent: str) -> str:

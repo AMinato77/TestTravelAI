@@ -230,19 +230,30 @@ def _normalize_category(types: list[str], query: str, name: str) -> str:
     joined = " ".join(types).lower()
     query_text = f"{query} {name}".lower()
     query_intents = infer_intents(query_text)
+    food_type = _has_any(joined, FOOD_PLACE_TYPES)
+    shopping_type = _has_any(joined, SHOPPING_PLACE_TYPES)
+    food_query = _has_any(query_text, FOOD_QUERY_TERMS)
+    shopping_query = _has_any(query_text, SHOPPING_QUERY_TERMS)
+
+    if food_type and food_query:
+        return "food"
+    if shopping_type and shopping_query and not food_query:
+        return "shopping"
+    if "market" in joined and food_query:
+        return "food"
     if "culture" in query_intents and any(value in joined for value in ["museum", "art_gallery", "tourist_attraction", "historical_landmark", "historical_place", "church", "castle", "mosque", "temple"]):
         return "culture"
     if "nature" in query_intents and any(value in joined for value in ["park", "garden", "natural_feature", "hiking", "beach", "scenic_spot"]):
         return "nature"
-    if "shopping" in query_intents and any(value in joined for value in ["shopping_mall", "market", "store", "book_store", "toy_store"]):
+    if "shopping" in query_intents and shopping_type and not food_query:
         return "shopping"
-    if any(value in joined for value in ["restaurant", "cafe", "bakery", "meal", "food"]):
+    if food_type:
         return "food"
     if any(value in joined for value in ["bar", "night_club"]):
         return "nightlife"
     if any(value in joined for value in ["park", "garden", "natural_feature", "hiking"]):
         return "nature"
-    if any(value in joined for value in ["shopping_mall", "market", "store", "book_store"]):
+    if shopping_type:
         return "shopping"
     if any(value in joined for value in ["stadium", "gym", "sports", "fitness"]):
         return "sport"
@@ -250,11 +261,77 @@ def _normalize_category(types: list[str], query: str, name: str) -> str:
         return "entertainment"
     if any(value in joined for value in ["museum", "art_gallery", "tourist_attraction", "historical_landmark", "church", "castle"]):
         return "culture"
-    if any(term in query_text for term in ["shop", "store", "market", "merchandise", "figure", "collectible"]):
+    if _has_any(query_text, SHOPPING_QUERY_TERMS) and not food_query:
         return "shopping"
-    if any(term in query_text for term in ["food", "restaurant", "cafe", "ramen", "dining"]):
+    if food_query:
         return "food"
     return "activity"
+
+
+FOOD_PLACE_TYPES = {
+    "restaurant",
+    "cafe",
+    "bakery",
+    "meal",
+    "food",
+    "food_store",
+    "supermarket",
+    "grocery_store",
+    "market",
+    "spanish_restaurant",
+    "fine_dining_restaurant",
+    "bar_and_grill",
+}
+
+SHOPPING_PLACE_TYPES = {
+    "shopping_mall",
+    "store",
+    "book_store",
+    "toy_store",
+    "clothing_store",
+    "electronics_store",
+    "home_goods_store",
+    "market",
+}
+
+FOOD_QUERY_TERMS = {
+    "food",
+    "local food",
+    "food market",
+    "market food",
+    "restaurant",
+    "restaurants",
+    "cafe",
+    "tapas",
+    "cuisine",
+    "culinary",
+    "dining",
+    "street food",
+    "essen",
+    "küche",
+    "kueche",
+}
+
+SHOPPING_QUERY_TERMS = {
+    "shop",
+    "shops",
+    "shopping",
+    "store",
+    "stores",
+    "mall",
+    "merchandise",
+    "figure",
+    "collectible",
+    "anime",
+    "manga",
+    "bookstore",
+    "laden",
+    "laeden",
+}
+
+
+def _has_any(text: str, values: set[str]) -> bool:
+    return any(value in text for value in values)
 
 
 def _estimate_cost(category: str, types: list[str] | None = None, query: str = "") -> float:

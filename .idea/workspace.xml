@@ -4,11 +4,13 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="6f8cfc59-74e7-4b7e-861b-87745aea2197" name="Changes" comment="Interaction Memory ui">
-      <change beforePath="$PROJECT_DIR$/.env.example" beforeDir="false" afterPath="$PROJECT_DIR$/.env.example" afterDir="false" />
+    <list default="true" id="6f8cfc59-74e7-4b7e-861b-87745aea2197" name="Changes" comment="discord calender">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/agents/query_planning_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agents/query_planning_agent.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/orchestrator.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/orchestrator.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/tools/gmail_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tools/gmail_tool.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/tools/places_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tools/places_tool.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/streamlit_app.py" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/streamlit_app.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -16,7 +18,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="873" />
+    <option name="cachedIndexableFilesCount" value="974" />
   </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
@@ -39,23 +41,23 @@
   </component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="1.3107708798462987" />
-      <entry key="MS500" value="3.8912625663346487" />
-      <entry key="S2" value="8.960878651199124" />
-      <entry key="S5" value="13.188053030999438" />
-      <entry key="S10" value="20.072261144083495" />
-      <entry key="S30" value="35.58813926126923" />
-      <entry key="S60" value="44.51518841492725" />
-      <entry key="M2" value="52.41356901416537" />
-      <entry key="M5" value="59.9492536020364" />
-      <entry key="M10" value="65.97573272692404" />
-      <entry key="M15" value="77.48113534217188" />
-      <entry key="M30" value="136.270671367477" />
-      <entry key="H1" value="293.71810238517173" />
-      <entry key="H2" value="710.7839443982185" />
-      <entry key="H4" value="1797.9822049471832" />
-      <entry key="D1" value="12466.820366330056" />
-      <entry key="W1" value="29322.98676310168" />
+      <entry key="MS100" value="1.3553682657712196" />
+      <entry key="MS500" value="3.8163171106895915" />
+      <entry key="S2" value="8.588548696291078" />
+      <entry key="S5" value="17.26567042062714" />
+      <entry key="S10" value="31.61042380270046" />
+      <entry key="S30" value="63.75229756231233" />
+      <entry key="S60" value="80.0891321822502" />
+      <entry key="M2" value="90.55568551746467" />
+      <entry key="M5" value="98.20070800410508" />
+      <entry key="M10" value="109.68855760559599" />
+      <entry key="M15" value="131.92450269865805" />
+      <entry key="M30" value="236.4256748645585" />
+      <entry key="H1" value="527.0607181675854" />
+      <entry key="H2" value="1181.5419291980431" />
+      <entry key="H4" value="2338.455834102274" />
+      <entry key="D1" value="12747.258681652964" />
+      <entry key="W1" value="32525.558487660674" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
@@ -66,34 +68,34 @@
       <entry key="S30" value="0.0" />
       <entry key="S60" value="0.0" />
       <entry key="M2" value="0.0" />
-      <entry key="M5" value="1.6138507838471265E-130" />
-      <entry key="M10" value="2.154637049420778E-65" />
-      <entry key="M15" value="1.1822997499280052E-43" />
-      <entry key="M30" value="6.746984020091374E-22" />
-      <entry key="H1" value="5.179806722765425E-11" />
-      <entry key="H2" value="1.4784692674191835E-5" />
-      <entry key="H4" value="0.008494240738877888" />
-      <entry key="D1" value="2.0562042077867475" />
-      <entry key="W1" value="5.8241335095865" />
+      <entry key="M5" value="7.2296091480488614E-177" />
+      <entry key="M10" value="1.4421148335386472E-88" />
+      <entry key="M15" value="4.19898907638389E-59" />
+      <entry key="M30" value="1.2715055351618982E-29" />
+      <entry key="H1" value="7.11078981565316E-15" />
+      <entry key="H2" value="1.7322654551600653E-7" />
+      <entry key="H4" value="9.194447493883704E-4" />
+      <entry key="D1" value="1.4194924561750453" />
+      <entry key="W1" value="5.523837210769293" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="1.290007549135003" />
-      <entry key="MS500" value="3.8756067135411465" />
-      <entry key="S2" value="8.95170301816999" />
-      <entry key="S5" value="13.182581592439844" />
-      <entry key="S10" value="20.068023959857335" />
-      <entry key="S30" value="35.585581279870155" />
-      <entry key="S60" value="44.51356260468209" />
-      <entry key="M2" value="52.41259273841616" />
-      <entry key="M5" value="59.9487982013324" />
-      <entry key="M10" value="65.97547926813401" />
-      <entry key="M15" value="77.48093410925591" />
-      <entry key="M30" value="136.27048779184616" />
-      <entry key="H1" value="293.7178982956586" />
-      <entry key="H2" value="710.7837021992584" />
-      <entry key="H4" value="1797.9903559378572" />
-      <entry key="D1" value="12468.876049253322" />
-      <entry key="W1" value="29328.810716800235" />
+      <entry key="MS100" value="1.3167170253364788" />
+      <entry key="MS500" value="3.785225858535194" />
+      <entry key="S2" value="8.553067509222776" />
+      <entry key="S5" value="17.24098938812721" />
+      <entry key="S10" value="31.592939151342858" />
+      <entry key="S30" value="63.743306730217995" />
+      <entry key="S60" value="80.08387209163494" />
+      <entry key="M2" value="90.55281290136651" />
+      <entry key="M5" value="98.19948882751164" />
+      <entry key="M10" value="109.68789939974029" />
+      <entry key="M15" value="131.92400213692827" />
+      <entry key="M30" value="236.42527976107573" />
+      <entry key="H1" value="527.0603212538491" />
+      <entry key="H2" value="1181.5415050471556" />
+      <entry key="H4" value="2338.4563331593354" />
+      <entry key="D1" value="12748.67768853661" />
+      <entry key="W1" value="32531.08213376752" />
     </decayedShown>
   </component>
   <component name="ProjectColorInfo">{
@@ -391,11 +393,51 @@
       <option name="project" value="LOCAL" />
       <updated>1783881128446</updated>
     </task>
-    <option name="localTasksCounter" value="15" />
+    <task id="LOCAL-00015" summary="discord usw">
+      <option name="closed" value="true" />
+      <created>1783897019516</created>
+      <option name="number" value="00015" />
+      <option name="presentableId" value="LOCAL-00015" />
+      <option name="project" value="LOCAL" />
+      <updated>1783897019516</updated>
+    </task>
+    <task id="LOCAL-00016" summary="discord usw 2">
+      <option name="closed" value="true" />
+      <created>1783954925739</created>
+      <option name="number" value="00016" />
+      <option name="presentableId" value="LOCAL-00016" />
+      <option name="project" value="LOCAL" />
+      <updated>1783954925740</updated>
+    </task>
+    <task id="LOCAL-00017" summary="discord calender">
+      <option name="closed" value="true" />
+      <created>1783966068578</created>
+      <option name="number" value="00017" />
+      <option name="presentableId" value="LOCAL-00017" />
+      <option name="project" value="LOCAL" />
+      <updated>1783966068578</updated>
+    </task>
+    <option name="localTasksCounter" value="18" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
     <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="OPEN_GENERIC_TABS">
+      <map>
+        <entry key="d0366482-e28f-48c8-a8a8-03ff3227d86f" value="TOOL_WINDOW" />
+      </map>
+    </option>
+    <option name="TAB_STATES">
+      <map>
+        <entry key="d0366482-e28f-48c8-a8a8-03ff3227d86f">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="uuzeren" />
@@ -412,6 +454,9 @@
     <MESSAGE value="Interaction 1" />
     <MESSAGE value="Interaction Memory" />
     <MESSAGE value="Interaction Memory ui" />
-    <option name="LAST_COMMIT_MESSAGE" value="Interaction Memory ui" />
+    <MESSAGE value="discord usw" />
+    <MESSAGE value="discord usw 2" />
+    <MESSAGE value="discord calender" />
+    <option name="LAST_COMMIT_MESSAGE" value="discord calender" />
   </component>
 </project>

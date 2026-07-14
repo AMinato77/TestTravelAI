@@ -32,6 +32,7 @@ from app.calendar.calendar_service import (
     sync_preview_to_calendar,
 )
 from app.calendar.calendar_state import sync_key
+from app.agents.preference_agent import extract_preferences
 from app.agents.request_agent import parse_travel_request
 from app.export.discord_client import DiscordDeliveryError
 from app.export.export_service import (
@@ -51,8 +52,8 @@ from app.orchestrator import (
     prepare_interactive_plan,
     revise_travel_plan,
 )
-from app.rag.memory_retrieval import delete_user_memory_sources
-from app.rag.user_memory import create_user_profile, list_user_ids, load_user_profile
+from app.rag.memory_retrieval import delete_user_memory_sources, ingest_preference_sources
+from app.rag.user_memory import create_user_profile, list_user_ids, load_user_profile, save_user_profile, update_user_profile
 from app.services.serialization import itinerary_to_dict, validation_to_dict
 from app.tools.gmail_tool import (
     GmailIntegrationError,
@@ -73,6 +74,7 @@ DEFAULT_REQUEST = (
     "aber kein Sport und keine Touristenfallen."
 )
 PDF_EXPORT_CACHE_VERSION = "travel-copy-v3"
+GMAIL_SIGNAL_CACHE_VERSION = "gmail-signals-v4"
 
 STYLE_CHOICES = [
     ("Ausgewogen", "balanced"),
@@ -127,6 +129,68 @@ def _friendly_exception(exc: Exception) -> str:
     if len(text) > 500:
         return text[:500] + "..."
     return text
+
+
+def _clean_sidebar_text(value: str, max_length: int = 90) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) > max_length:
+        text = text[: max_length - 1].rstrip() + "..."
+    return html.escape(text)
+
+
+def _gmail_memory_summary(source_text: str) -> dict[str, list[str]]:
+    sections = {
+        "patterns": [],
+        "query_hints": [],
+        "avoid": [],
+    }
+    current: str | None = None
+    for raw_line in str(source_text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        lower = line.lower().rstrip(":")
+        if lower == "reliable travel preference patterns":
+            current = "patterns"
+            continue
+        if lower == "soft query directions for future trips":
+            current = "query_hints"
+            continue
+        if lower == "avoid or treat carefully":
+            current = "avoid"
+            continue
+        if lower == "supporting email signals":
+            current = None
+            continue
+        if current and line.startswith("- "):
+            sections[current].append(line[2:].strip())
+    return sections
+
+
+def _remove_gmail_derived_profile_notes(profile):
+    gmail_terms = [
+        "gmail",
+        "newsletter",
+        "mail signal",
+        "email signal",
+        "travel relevance",
+        "nature briefing",
+        "vacation rentals",
+        "vacation rental",
+        "ferienhaus",
+        "sonne und strand",
+        "denmark vacation",
+    ]
+    cleaned_notes = []
+    for note in getattr(profile, "preference_notes", []) or []:
+        lower = str(note).lower()
+        if any(term in lower for term in gmail_terms):
+            continue
+        cleaned_notes.append(note)
+    profile.preference_notes = cleaned_notes
+    return profile
+
+
 MAIN_VIEWS = ["Briefing", "Kandidaten", "Reiseplan", "Memory", "Technik"]
 
 
@@ -218,24 +282,17 @@ def _render_sidebar(profile) -> dict[str, Any]:
     _sidebar_list("Ziele", getattr(profile, "past_destinations", []))
 
     st.sidebar.divider()
-    st.sidebar.markdown("### Quellen")
-    uploaded_files = st.sidebar.file_uploader(
-        "Notizen / Chat-Exports",
-        type=["txt", "md", "json", "csv"],
-        accept_multiple_files=True,
-        key="source_uploads",
-    )
-    travel_ratings = st.sidebar.text_area(
-        "Reisebewertungen",
-        placeholder="Barcelona: 9/10, Essen war super.\nParis: 5/10, zu touristisch.",
-        height=96,
-        key="travel_ratings",
-    )
-
-    st.sidebar.divider()
     st.sidebar.markdown("### Gmail")
     creds_ok = gmail_credentials_available()
     st.sidebar.caption(f"Credentials: {'ok' if creds_ok else 'fehlt'}")
+    gmail_loaded_messages = st.session_state.get("gmail_messages") or []
+    gmail_loaded_sources = st.session_state.get("gmail_sources") or []
+    gmail_account = st.session_state.get("gmail_account_email") or ""
+    if gmail_account or gmail_loaded_messages or gmail_loaded_sources:
+        st.sidebar.caption(
+            f"Verbunden: {gmail_account or 'unbekannt'} | "
+            f"Mails: {len(gmail_loaded_messages)} | Memory: {len(gmail_loaded_sources)}"
+        )
     with st.sidebar.expander("OAuth", expanded=False):
         if not creds_ok:
             credentials = st.file_uploader("OAuth Client JSON", type=["json"], key="gmail_credentials_upload")
@@ -249,6 +306,47 @@ def _render_sidebar(profile) -> dict[str, Any]:
 
         gmail_limit = st.number_input("Max. Mails", min_value=1, max_value=50, value=20, step=1)
         gmail_days = st.number_input("Lookback Tage", min_value=1, max_value=3650, value=365, step=30)
+        gmail_query = ""
+        gmail_last_status = st.session_state.get("gmail_last_status")
+        if isinstance(gmail_last_status, dict) and gmail_last_status.get("message"):
+            status_type = gmail_last_status.get("type")
+            if status_type == "success":
+                st.success(str(gmail_last_status["message"]))
+            elif status_type == "warning":
+                st.warning(str(gmail_last_status["message"]))
+            else:
+                st.info(str(gmail_last_status["message"]))
+
+        if gmail_loaded_messages or gmail_loaded_sources:
+            kept_messages = [message for message in gmail_loaded_messages if getattr(message, "keep_as_preference", False)]
+            with st.expander("Gmail-Memory", expanded=False):
+                st.caption(
+                    f"{len(gmail_loaded_messages)} Mail(s) geprueft, "
+                    f"{len(kept_messages)} als Reise-Signal verdichtet."
+                )
+                if gmail_loaded_sources:
+                    st.caption(f"{len(gmail_loaded_sources)} Gmail-Memory-Eintrag wird beim naechsten Plan als weicher Kontext verwendet.")
+                    for source in gmail_loaded_sources[:2]:
+                        summary = _gmail_memory_summary(getattr(source, "text", ""))
+                        if summary["patterns"]:
+                            st.markdown("**Erkannte Muster**")
+                            for item in summary["patterns"][:4]:
+                                st.markdown(f"- {_clean_sidebar_text(item, 140)}")
+                        if summary["query_hints"]:
+                            st.markdown("**Moegliche Query-Richtungen**")
+                            for item in summary["query_hints"][:5]:
+                                st.caption(f"- {item}")
+                        if not summary["patterns"] and not summary["query_hints"]:
+                            st.caption("Die Quelle wurde gespeichert, enthaelt aber nur schwache oder sehr allgemeine Signale.")
+
+                with st.expander("Technische Mail-Signale", expanded=False):
+                    st.caption("Nur zur Kontrolle. Diese Betreffzeilen werden nicht direkt als Interessen gespeichert.")
+                    for message in kept_messages[:8]:
+                        tags = ", ".join(getattr(message, "inferred_interest_tags", [])[:4])
+                        st.markdown(f"- **{_clean_sidebar_text(getattr(message, 'subject', ''))}**")
+                        if tags:
+                            st.caption(tags)
+
         if st.button("Gmail laden", disabled=not creds_ok, use_container_width=True):
             try:
                 account_email = get_gmail_account_email(st.session_state.user_id)
@@ -256,11 +354,84 @@ def _render_sidebar(profile) -> dict[str, Any]:
                     user_id=st.session_state.user_id,
                     max_messages=int(gmail_limit),
                     lookback_days=int(gmail_days),
+                    query=gmail_query,
                 )
                 st.session_state.gmail_account_email = account_email
                 st.session_state.gmail_sources = sources
                 st.session_state.gmail_messages = messages
-                st.success(f"{len(messages)} Mail(s), {len(sources)} Quelle(n)")
+                deleted_old_chunks = 0
+                try:
+                    deleted_old_chunks = delete_user_memory_sources(st.session_state.user_id, source_type="email_newsletter")
+                except Exception as exc:
+                    st.session_state.gmail_last_status = {
+                        "type": "warning",
+                        "message": (
+                            f"{len(messages)} Mail(s) geprueft, aber alte Gmail-Memory konnte nicht bereinigt werden: "
+                            f"{_friendly_exception(exc)}"
+                        ),
+                    }
+                    st.rerun()
+                if sources:
+                    stored_chunks = 0
+                    profile_note_count = 0
+                    try:
+                        stored_chunks = ingest_preference_sources(st.session_state.user_id, sources)
+                        extracted_profile = extract_preferences(
+                            request=TravelRequest(
+                                destination="",
+                                duration_days=1,
+                                budget=0,
+                                travel_style="balanced",
+                                use_profile_memory=True,
+                            ),
+                            budget_preference="medium",
+                            preference_sources=sources,
+                        )
+                        updated_profile = update_user_profile(
+                            existing=_remove_gmail_derived_profile_notes(load_user_profile(st.session_state.user_id)),
+                            extracted=extracted_profile,
+                            destination="",
+                            current_interest_tags=[],
+                            uploaded_sources=[source.name for source in sources],
+                        )
+                        profile_note_count = len(updated_profile.preference_notes)
+                    except Exception as exc:
+                        st.session_state.gmail_last_status = {
+                            "type": "warning",
+                            "message": (
+                            f"{len(messages)} Mail(s) geprueft und {len(sources)} Gmail-Memory-Eintrag erkannt, "
+                                f"aber Memory/Profile konnte nicht aktualisiert werden: {_friendly_exception(exc)}"
+                            ),
+                        }
+                        st.rerun()
+                    st.session_state.gmail_last_status = {
+                        "type": "success",
+                        "message": (
+                            f"{len(messages)} Mail(s) geprueft, {len(sources)} Gmail-Memory-Eintrag geladen "
+                            f"und {stored_chunks} Chroma-Chunk(s) gespeichert. Alte Gmail-Chunk(s) ersetzt: {deleted_old_chunks}. "
+                            f"Profil jetzt mit {profile_note_count} Praeferenznotiz(en) aktualisiert."
+                        ),
+                    }
+                elif messages:
+                    cleaned_profile = _remove_gmail_derived_profile_notes(load_user_profile(st.session_state.user_id))
+                    save_user_profile(cleaned_profile)
+                    st.session_state.gmail_last_status = {
+                        "type": "warning",
+                        "message": (
+                            f"{len(messages)} Mail(s) geprueft, aber keine belastbare Reisepraeferenz erkannt. "
+                            f"Diese Mails werden deshalb nicht als Memory gespeichert. Alte Gmail-Chunk(s) entfernt: {deleted_old_chunks}."
+                        ),
+                    }
+                else:
+                    cleaned_profile = _remove_gmail_derived_profile_notes(load_user_profile(st.session_state.user_id))
+                    save_user_profile(cleaned_profile)
+                    st.session_state.gmail_last_status = {
+                        "type": "warning",
+                        "message": (
+                            "Keine passenden Reise-Mails gefunden. "
+                            f"Alte Gmail-Chunk(s) entfernt: {deleted_old_chunks}."
+                        ),
+                    }
                 st.rerun()
             except GmailIntegrationError as exc:
                 st.error(_friendly_exception(exc))
@@ -269,6 +440,7 @@ def _render_sidebar(profile) -> dict[str, Any]:
             st.session_state.gmail_sources = []
             st.session_state.gmail_messages = []
             st.session_state.gmail_account_email = ""
+            st.session_state.gmail_last_status = {"type": "info", "message": f"{deleted} Gmail-Memory-Chunk(s) geloescht."}
             st.success(f"{deleted} Gmail-Memory-Chunk(s) geloescht.")
             st.rerun()
 
@@ -288,8 +460,6 @@ def _render_sidebar(profile) -> dict[str, Any]:
         st.rerun()
 
     return {
-        "uploaded_files": uploaded_files or [],
-        "travel_ratings": travel_ratings,
         "gmail_sources": st.session_state.get("gmail_sources", []),
         "gmail_messages": st.session_state.get("gmail_messages", []),
         "gmail_account_email": st.session_state.get("gmail_account_email", ""),
@@ -412,7 +582,7 @@ def _render_candidates_view() -> None:
         st.markdown(
             _info_panel(
                 "Noch keine Kandidaten",
-                "Bereite zuerst im Briefing-Tab eine Reise vor. Danach erscheinen hier echte Google-Places-Kandidaten und Rueckfragen.",
+                "Bereite zuerst im Briefing-Tab eine Reise vor. Danach erscheinen hier echte Google-Places-Kandidaten zur Auswahl.",
             ),
             unsafe_allow_html=True,
         )
@@ -523,14 +693,9 @@ def _run_prepare_plan(
         effective_avoid = _merge_unique(_parse_list(avoid_text), avoid_tags, parsed.avoid)
         effective_tags = _merge_unique(interest_tags, parsed.interest_tags)
         effective_query_hints = _merge_unique(parsed.query_hints, [f"{parsed.destination} {item}" for item in effective_must_have if parsed.destination])
-        preference_sources = _build_preference_sources(
-            sidebar_state.get("uploaded_files") or [],
-            sidebar_state.get("travel_ratings") or "",
-            "",
-        )
-        preference_sources.extend(sidebar_state.get("gmail_sources") or [])
+        preference_sources = list(sidebar_state.get("gmail_sources") or [])
 
-        with st.spinner("TravelAI recherchiert echte Orte und bereitet Rueckfragen vor..."):
+        with st.spinner("TravelAI recherchiert echte Orte und bereitet die Kandidatenauswahl vor..."):
             prepared = prepare_interactive_plan(
                 user_id=st.session_state.user_id,
                 destination=parsed.destination,
@@ -613,29 +778,7 @@ def _render_interactive_planning(prepared: PreparedPlanContext) -> None:
     if getattr(request, "use_profile_memory", False) or (prepared.query_planning or {}).get("memory_usage"):
         st.caption("Memory wurde beruecksichtigt. Details findest du im Memory-Tab.")
 
-    st.markdown("#### Rueckfragen")
     answers: dict[str, str] = {}
-    if prepared.questions:
-        for question in prepared.questions:
-            options = question.get("options") or []
-            labels = [str(option.get("label")) for option in options]
-            default_index = 0
-            selected = st.radio(
-                str(question.get("question") or question.get("title") or "Auswahl"),
-                labels,
-                index=default_index,
-                horizontal=True,
-                key=f"interactive_question_{question.get('id')}",
-            )
-            selected_option = next((option for option in options if option.get("label") == selected), options[0] if options else {})
-            if selected_option.get("note"):
-                st.caption(str(selected_option.get("note")))
-            if selected_option.get("value"):
-                answers[str(question.get("id"))] = str(selected_option.get("value"))
-            if question.get("context"):
-                st.caption("Betrifft: " + ", ".join(str(item) for item in question.get("context") or []))
-    else:
-        st.caption("Keine zwingende Rueckfrage erkannt. Du kannst trotzdem Kandidaten markieren.")
 
     st.markdown("#### Orte und Erlebnisse")
     candidate_actions: dict[str, str] = {}
@@ -1142,7 +1285,7 @@ def _render_empty_state(profile, sidebar_state: dict[str, Any]) -> None:
     col_1, col_2, col_3, col_4 = st.columns(4)
     col_1.metric("Profil", getattr(profile, "user_id", st.session_state.user_id))
     col_2.metric("Memory-Tags", len(getattr(profile, "interest_tags", [])))
-    col_3.metric("Quellen", len(sidebar_state.get("uploaded_files") or []) + len(sidebar_state.get("gmail_sources") or []))
+    col_3.metric("Gmail-Memory", len(sidebar_state.get("gmail_sources") or []))
     col_4.metric("Provider", ai_provider())
     st.markdown(
         _info_panel(
@@ -1813,19 +1956,6 @@ def _render_tech_view(
             st.json(result.cost_report)
 
 
-def _build_preference_sources(uploaded_files, travel_ratings: str, feedback: str) -> list[PreferenceSource]:
-    sources: list[PreferenceSource] = []
-    for uploaded_file in uploaded_files or []:
-        raw = uploaded_file.getvalue()
-        text = raw.decode("utf-8", errors="ignore")
-        sources.append(PreferenceSource(source_type="upload", name=uploaded_file.name, text=text))
-    if travel_ratings.strip():
-        sources.append(PreferenceSource(source_type="travel_rating", name="manual_travel_ratings", text=travel_ratings))
-    if feedback.strip():
-        sources.append(PreferenceSource(source_type="feedback", name="current_feedback", text=feedback))
-    return sources
-
-
 def _init_state() -> None:
     st.session_state.setdefault("user_id", DEFAULT_USER_ID)
     st.session_state.setdefault("last_result", None)
@@ -1842,6 +1972,16 @@ def _init_state() -> None:
     st.session_state.setdefault("gmail_sources", [])
     st.session_state.setdefault("gmail_messages", [])
     st.session_state.setdefault("gmail_account_email", "")
+    st.session_state.setdefault("gmail_last_status", {})
+    if st.session_state.get("gmail_signal_cache_version") != GMAIL_SIGNAL_CACHE_VERSION:
+        st.session_state.gmail_sources = []
+        st.session_state.gmail_messages = []
+        st.session_state.gmail_account_email = ""
+        st.session_state.gmail_last_status = {
+            "type": "info",
+            "message": "Gmail-Signale wurden zur neuen Klassifikationslogik zurueckgesetzt. Bitte Gmail erneut laden.",
+        }
+        st.session_state.gmail_signal_cache_version = GMAIL_SIGNAL_CACHE_VERSION
     st.session_state.setdefault("trip_export", None)
     st.session_state.setdefault("trip_export_hash", "")
     st.session_state.setdefault("sample_trip_export", None)

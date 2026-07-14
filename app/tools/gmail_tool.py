@@ -15,19 +15,131 @@ GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 DEFAULT_CREDENTIALS_FILE = Path("data/gmail_credentials.json")
 DEFAULT_TOKEN_DIR = Path("data/gmail_tokens")
 NEWSLETTER_QUERY_TERMS = [
-    "newsletter",
     "travel",
     "reise",
+    "reisen",
+    "urlaub",
+    "vacation",
     "trip",
+    "city trip",
     "flight",
+    "flug",
+    "flights",
     "hotel",
-    "deal",
-    "angebot",
-    "event",
-    "guide",
+    "booking",
+    "airbnb",
+    "hostel",
+    "restaurant",
+    "food tour",
+    "city guide",
+    "travel guide",
+    "itinerary",
+    "activities",
+    "attractions",
+    "tickets",
+    "museum",
+    "museen",
+    "bahn",
+    "train",
 ]
 NEWSLETTER_LABELS = ["CATEGORY_PROMOTIONS", "CATEGORY_UPDATES", "CATEGORY_FORUMS"]
+GMAIL_TRAVEL_QUERY_TERMS = [
+    "travel",
+    "reise",
+    "reisen",
+    "urlaub",
+    "vacation",
+    "trip",
+    "flight",
+    "flug",
+    "hotel",
+    "booking",
+    "airbnb",
+    "restaurant",
+    "city guide",
+    "travel guide",
+    "itinerary",
+    "activities",
+    "tickets",
+]
 MAX_SOURCE_TEXT_CHARS = 8000
+MIN_AI_KEEP_SCORE = 0.55
+
+NON_TRAVEL_NEWS_TERMS = {
+    "nature briefing",
+    "science",
+    "scientist",
+    "scientists",
+    "research",
+    "study",
+    "evidence-based medicine",
+    "preprint",
+    "preprints",
+    "mutation",
+    "protein",
+    "fossil",
+    "fossilized",
+    "bones",
+    "whale graveyard",
+    "squirrels",
+    "pleistocene",
+    "octopus",
+    "octopuses",
+    "nuclear clocks",
+    "atomic clocks",
+    "rocket",
+    "rocket launches",
+    "space balls",
+    "deep-sea",
+}
+
+REAL_TRAVEL_BEHAVIOR_TERMS = {
+    "urlaub",
+    "ferien",
+    "ferienhaus",
+    "ferienwohnung",
+    "reise",
+    "reisen",
+    "travel",
+    "trip",
+    "vacation",
+    "holiday",
+    "hotel",
+    "flight",
+    "flug",
+    "booking",
+    "airbnb",
+    "hostel",
+    "ticket",
+    "tickets",
+    "tour",
+    "tours",
+    "city guide",
+    "travel guide",
+    "itinerary",
+    "destination",
+    "sommerurlaub",
+    "strandurlaub",
+    "landurlaub",
+    "reiseangebot",
+    "travel deal",
+}
+
+TRAVEL_PROVIDER_HINTS = {
+    "booking",
+    "airbnb",
+    "hotel",
+    "holiday",
+    "urlaub",
+    "ferien",
+    "reise",
+    "travel",
+    "strand",
+    "sonne",
+    "tour",
+    "flight",
+    "flug",
+}
 
 
 class GmailIntegrationError(RuntimeError):
@@ -148,14 +260,8 @@ def build_gmail_preference_source(
         return [], []
     classified_messages = _classify_newsletter_messages(messages)
     kept_messages = [message for message in classified_messages if message.keep_as_preference]
-    if not kept_messages:
-        return [], classified_messages
-    source = PreferenceSource(
-        source_type="email_newsletter",
-        name="gmail_newsletter_signals",
-        text=_signals_to_preference_text(kept_messages),
-    )
-    return [source], classified_messages
+    source = _build_gmail_memory_source(kept_messages)
+    return ([source] if source else []), classified_messages
 
 
 def fetch_gmail_newsletter_signals(
@@ -282,12 +388,17 @@ def _gmail_queries(query: str, lookback_days: int) -> list[str]:
     explicit = query.strip()
     if explicit:
         return [f"({explicit}) newer_than:{lookback_days}d"]
+
+    broad_travel_query = " OR ".join(f'"{term}"' if " " in term else term for term in GMAIL_TRAVEL_QUERY_TERMS)
     queries = [
-        f'category:{label.split("_", 1)[1].lower()} newer_than:{lookback_days}d'
-        for label in NEWSLETTER_LABELS
+        f"newer_than:{lookback_days}d ({broad_travel_query})",
     ]
-    queries.extend(f'newer_than:{lookback_days}d {term}' for term in NEWSLETTER_QUERY_TERMS)
-    queries.append(f'newer_than:{lookback_days}d (list-unsubscribe OR list-id)')
+    queries.extend(
+        f'category:{label.split("_", 1)[1].lower()} newer_than:{lookback_days}d ({broad_travel_query})'
+        for label in NEWSLETTER_LABELS
+    )
+    queries.extend(f'newer_than:{lookback_days}d "{term}"' if " " in term else f"newer_than:{lookback_days}d {term}" for term in GMAIL_TRAVEL_QUERY_TERMS)
+    queries.append(f"newer_than:{lookback_days}d (list-unsubscribe OR list-id) ({broad_travel_query})")
     return queries
 
 
@@ -352,7 +463,7 @@ def _classify_newsletter_messages(messages: list[GmailNewsletterMessage]) -> lis
     if not messages:
         return []
     if demo_fallback_enabled():
-        return [_classify_message_fallback(message) for message in messages]
+        return [_finalize_classified_message(_classify_message_fallback(message)) for message in messages]
     try:
         data = generate_json(
             system_prompt=(
@@ -384,9 +495,9 @@ def _classify_newsletter_messages(messages: list[GmailNewsletterMessage]) -> lis
             },
             model_env="OPENAI_GMAIL_SIGNAL_MODEL",
         )
-        return _apply_ai_classification(messages, data)
+        return [_finalize_classified_message(message) for message in _apply_ai_classification(messages, data)]
     except Exception:
-        return [_classify_message_fallback(message) for message in messages]
+        return [_finalize_classified_message(_classify_message_fallback(message)) for message in messages]
 
 
 def _apply_ai_classification(messages: list[GmailNewsletterMessage], data: dict) -> list[GmailNewsletterMessage]:
@@ -412,7 +523,13 @@ def _apply_ai_classification(messages: list[GmailNewsletterMessage], data: dict)
         interest_tags = _normalize_interest_tags(row.get("interest_tags") or []) or fallback.inferred_interest_tags
         summary = _clean_text(str(row.get("summary") or ""))
         reason = _clean_text(str(row.get("reason") or ""))
-        keep = bool(row.get("keep")) and score >= 0.45 and bool(summary)
+        keep = bool(row.get("keep")) and score >= MIN_AI_KEEP_SCORE and bool(summary)
+        if keep and _looks_like_non_travel_news(message) and not _has_real_travel_behavior_signal(message):
+            keep = False
+            reason = "Generic news/science content is not a reliable travel preference signal."
+        if keep and not _has_real_travel_behavior_signal(message) and not _has_travel_provider_sender(message):
+            keep = False
+            reason = "No concrete travel behavior, provider, booking, destination, or planning signal found."
         if not fallback.keep_as_preference and _is_admin_or_noise_reason(fallback.ignore_reason):
             keep = False
         message.keep_as_preference = keep
@@ -444,6 +561,22 @@ def _copy_message(message: GmailNewsletterMessage) -> GmailNewsletterMessage:
     )
 
 
+def _finalize_classified_message(message: GmailNewsletterMessage) -> GmailNewsletterMessage:
+    if not message.keep_as_preference:
+        return message
+    if _looks_like_non_travel_news(message) and not _has_real_travel_behavior_signal(message):
+        return _ignored_message(
+            message,
+            "Newsletter wirkt wie allgemeine News/Wissenschaft und nicht wie ein belastbares Reisepraeferenzsignal.",
+        )
+    if not _has_real_travel_behavior_signal(message) and not _has_travel_provider_sender(message):
+        return _ignored_message(
+            message,
+            "Kein konkreter Reiseanbieter, keine Buchung, kein Ziel und kein Planungsinteresse erkennbar.",
+        )
+    return message
+
+
 def _is_admin_or_noise_reason(reason: str) -> bool:
     lower = reason.lower()
     return any(
@@ -461,8 +594,31 @@ def _is_admin_or_noise_reason(reason: str) -> bool:
     )
 
 
+def _looks_like_non_travel_news(message: GmailNewsletterMessage) -> bool:
+    text = _signal_text(message)
+    return any(term in text for term in NON_TRAVEL_NEWS_TERMS)
+
+
+def _has_real_travel_behavior_signal(message: GmailNewsletterMessage) -> bool:
+    text = _signal_text(message)
+    if _looks_like_non_travel_news(message) and not _has_travel_provider_sender(message):
+        strong_terms = REAL_TRAVEL_BEHAVIOR_TERMS - {"travel", "destination", "beach", "strand"}
+        return any(term in text for term in strong_terms)
+    return any(term in text for term in REAL_TRAVEL_BEHAVIOR_TERMS)
+
+
+def _has_travel_provider_sender(message: GmailNewsletterMessage) -> bool:
+    sender = str(message.sender or "").lower()
+    list_id = str(message.list_id or "").lower()
+    return any(term in sender or term in list_id for term in TRAVEL_PROVIDER_HINTS)
+
+
+def _signal_text(message: GmailNewsletterMessage) -> str:
+    return f"{message.sender} {message.subject} {message.snippet} {message.list_id}".lower()
+
+
 def _classify_message_fallback(message: GmailNewsletterMessage) -> GmailNewsletterMessage:
-    text = f"{message.sender} {message.subject} {message.snippet}".lower()
+    text = _signal_text(message)
     admin_terms = [
         "confirm",
         "confirmation",
@@ -503,6 +659,8 @@ def _classify_message_fallback(message: GmailNewsletterMessage) -> GmailNewslett
         "reisentipps",
         "guide",
     ]
+    if _looks_like_non_travel_news(message) and not _has_real_travel_behavior_signal(message):
+        return _ignored_message(message, "Newsletter wirkt wissenschaftlich/inhaltlich, aber nicht wie ein Reisepraeferenzsignal.")
     if any(term in text for term in non_travel_science_terms) and not any(term in text for term in travel_terms):
         return _ignored_message(message, "Newsletter wirkt wissenschaftlich/inhaltlich, aber nicht wie ein Reisepräferenzsignal.")
     if any(term in text for term in admin_terms) and not any(term in text for term in ["hotel", "urlaub", "reiseangebot", "travel deal"]):
@@ -580,12 +738,34 @@ def _build_fallback_summary(message: GmailNewsletterMessage) -> str:
 
 
 def _signals_to_preference_text(signals: list[GmailNewsletterMessage]) -> str:
+    aggregate = _aggregate_gmail_signals(signals)
     lines = [
-        "Gmail newsletter preference signals after relevance classification.",
+        "Gmail-derived travel preference memory after relevance classification.",
         "Only metadata, snippets, and extracted travel preference summaries are included; full email bodies are not stored.",
         f"Kept travel-relevant signal count: {len(signals)}",
+        f"Reliable pattern count: {len(aggregate['patterns'])}",
+        "",
+        "Use this as soft planning context only. Do not override explicit user wishes.",
+        "Prefer these signals only when they fit the requested destination and trip type.",
         "",
     ]
+    if aggregate["patterns"]:
+        lines.append("Reliable travel preference patterns:")
+        for pattern in aggregate["patterns"]:
+            lines.append(f"- {pattern}")
+        lines.append("")
+    if aggregate["query_hints"]:
+        lines.append("Soft query directions for future trips:")
+        for hint in aggregate["query_hints"]:
+            lines.append(f"- {hint}")
+        lines.append("")
+    if aggregate["avoid"]:
+        lines.append("Avoid or treat carefully:")
+        for item in aggregate["avoid"]:
+            lines.append(f"- {item}")
+        lines.append("")
+
+    lines.append("Supporting email signals:")
     for index, signal in enumerate(signals, start=1):
         lines.extend(
             [
@@ -604,10 +784,142 @@ def _signals_to_preference_text(signals: list[GmailNewsletterMessage]) -> str:
     return "\n".join(lines)[:MAX_SOURCE_TEXT_CHARS]
 
 
+def _build_gmail_memory_source(signals: list[GmailNewsletterMessage]) -> PreferenceSource | None:
+    if not signals:
+        return None
+    aggregate = _aggregate_gmail_signals(signals)
+    if not aggregate["patterns"] and not aggregate["query_hints"]:
+        return None
+    return PreferenceSource(
+        source_type="email_newsletter",
+        name="gmail_newsletter_signals",
+        text=_signals_to_preference_text(signals),
+    )
+
+
 def _infer_weak_signal_tags(signal: GmailNewsletterMessage) -> list[str]:
     if signal.inferred_interest_tags:
         return signal.inferred_interest_tags
     return _classify_message_fallback(signal).inferred_interest_tags
+
+
+def _aggregate_gmail_signals(signals: list[GmailNewsletterMessage]) -> dict:
+    tag_counts: dict[str, int] = {}
+    high_confidence_tags: set[str] = set()
+    budget_counts: dict[str, int] = {}
+    style_counts: dict[str, int] = {}
+    avoid_counts: dict[str, int] = {}
+    provider_counts: dict[str, int] = {}
+
+    for signal in signals:
+        provider = _provider_label(signal)
+        if provider:
+            provider_counts[provider] = provider_counts.get(provider, 0) + 1
+        for tag in _normalize_interest_tags(signal.inferred_interest_tags):
+            tag_counts[tag] = tag_counts.get(tag, 0) + 1
+            if signal.travel_relevance_score >= 0.75:
+                high_confidence_tags.add(tag)
+        if signal.budget_signal and signal.budget_signal != "unknown":
+            budget_counts[signal.budget_signal] = budget_counts.get(signal.budget_signal, 0) + 1
+        if signal.travel_style_signal and signal.travel_style_signal != "unknown":
+            style_counts[signal.travel_style_signal] = style_counts.get(signal.travel_style_signal, 0) + 1
+        for item in signal.avoid:
+            cleaned = " ".join(str(item).lower().split())
+            if cleaned:
+                avoid_counts[cleaned] = avoid_counts.get(cleaned, 0) + 1
+
+    reliable_tags = [
+        tag
+        for tag, count in sorted(tag_counts.items(), key=lambda item: (-item[1], item[0]))
+        if count >= 2 or tag in high_confidence_tags
+    ][:8]
+
+    patterns: list[str] = []
+    query_hints: list[str] = []
+    avoid: list[str] = []
+
+    if provider_counts:
+        top_provider, count = sorted(provider_counts.items(), key=lambda item: (-item[1], item[0]))[0]
+        if count >= 2:
+            patterns.append(
+                f"Repeated travel newsletter source around {top_provider}; treat as a soft preference signal, not a hard requirement."
+            )
+
+    if reliable_tags:
+        patterns.append(f"Recurring interests inferred from newsletters: {', '.join(reliable_tags)}.")
+        query_hints.extend(_query_hints_from_tags(reliable_tags))
+
+    dominant_style = _dominant_signal(style_counts)
+    if dominant_style:
+        patterns.append(f"Travel style signal from newsletters: {dominant_style}.")
+        if dominant_style == "relaxed":
+            query_hints.append("relaxed local experiences")
+
+    dominant_budget = _dominant_signal(budget_counts, minimum=1)
+    if dominant_budget:
+        if dominant_budget == "low":
+            patterns.append("Budget signal from newsletters: user may respond well to good-value offers or price-conscious options.")
+            query_hints.append("good value local experiences")
+        elif dominant_budget == "high":
+            patterns.append("Budget signal from newsletters: user may be open to premium experiences when relevant.")
+
+    for item, count in sorted(avoid_counts.items(), key=lambda row: (-row[1], row[0])):
+        if count >= 2:
+            avoid.append(item)
+
+    return {"patterns": patterns[:8], "query_hints": _dedupe_text(query_hints)[:8], "avoid": avoid[:6]}
+
+
+def _provider_label(signal: GmailNewsletterMessage) -> str:
+    text = f"{signal.sender} {signal.list_id}".lower()
+    if "sonne" in text and "strand" in text:
+        return "vacation homes and coastal stays"
+    if "booking" in text:
+        return "accommodation booking"
+    if "airbnb" in text:
+        return "apartment-style stays"
+    if "flight" in text or "flug" in text:
+        return "flights"
+    if "hotel" in text:
+        return "hotels"
+    return ""
+
+
+def _query_hints_from_tags(tags: list[str]) -> list[str]:
+    hints: list[str] = []
+    joined = " ".join(tags)
+    if any(term in joined for term in ["food", "restaurant", "dining"]):
+        hints.extend(["local food markets", "authentic local restaurants"])
+    if any(term in joined for term in ["relax", "slow", "vacation home"]):
+        hints.append("relaxed local experiences")
+    if "family" in joined:
+        hints.append("family friendly experiences")
+    if any(term in joined for term in ["beach", "coastal", "nature"]):
+        hints.append("scenic outdoor experiences if relevant")
+    if any(term in joined for term in ["culture", "museum", "art"]):
+        hints.append("cultural experiences")
+    if any(term in joined for term in ["discount", "deal", "good value"]):
+        hints.append("good value experiences")
+    return hints
+
+
+def _dominant_signal(counts: dict[str, int], minimum: int = 2) -> str:
+    if not counts:
+        return ""
+    value, count = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0]
+    return value if count >= minimum else ""
+
+
+def _dedupe_text(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        cleaned = " ".join(str(value).strip().lower().split())
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        result.append(cleaned)
+    return result
 
 
 def _normalize_interest_tags(values) -> list[str]:
@@ -618,11 +930,12 @@ def _normalize_interest_tags(values) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
     for value in values:
-        cleaned = " ".join(str(value).strip().lower().split())
-        if not cleaned or cleaned in seen or cleaned in {"none", "unknown", "null", "n/a", "-"}:
-            continue
-        seen.add(cleaned)
-        result.append(cleaned)
+        for part in re.split(r"[,;/|]+", str(value)):
+            cleaned = " ".join(part.strip().lower().split())
+            if not cleaned or cleaned in seen or cleaned in {"none", "unknown", "null", "n/a", "-"}:
+                continue
+            seen.add(cleaned)
+            result.append(cleaned)
     return result
 
 
